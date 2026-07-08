@@ -60,16 +60,24 @@ def compute_beat_durations(shot_list: list[dict], total_duration: float) -> list
 
 
 def _reconcile(durations: list[float], target_total: float) -> list[float]:
-    """Force exact sum by absorbing drift in the last beat; if that would push it below a
-    watchable floor (many beats + short narration), spread the shortfall evenly instead."""
-    diff = target_total - sum(durations)
-    if abs(diff) < 0.01:
+    """Scale every beat proportionally so the list sums to exactly `target_total`.
+
+    Absorbing all the drift in the last beat breaks down badly when few beats cover a long
+    narration: the shot-type clamps cap each beat at a handful of seconds, so 10 clamped beats
+    over a 7-minute narration leave ~400s of drift that, dumped on the last beat, becomes a
+    single motionless 7-minute shot. Proportional scaling keeps each beat's relative pacing
+    share intact while still summing exactly to the narration length (no audio/picture drift).
+    """
+    current = sum(durations)
+    diff = target_total - current
+    if abs(diff) < 0.01 or current <= 0:
         return durations
-    out = list(durations)
-    adjusted_last = out[-1] + diff
-    if adjusted_last < MIN_BEAT_SECONDS:
-        per_beat = diff / len(out)
-        out = [max(MIN_BEAT_SECONDS, d + per_beat) for d in out]
-    else:
-        out[-1] = adjusted_last
+    scale = target_total / current
+    out = [max(MIN_BEAT_SECONDS, d * scale) for d in durations]
+    # The MIN floor can nudge the sum off target (heavy down-scaling); park the small residual
+    # on the longest beat, where it is least visible.
+    residual = target_total - sum(out)
+    if abs(residual) >= 0.01:
+        k = max(range(len(out)), key=lambda i: out[i])
+        out[k] = max(MIN_BEAT_SECONDS, out[k] + residual)
     return out
