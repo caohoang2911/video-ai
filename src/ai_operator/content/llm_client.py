@@ -89,10 +89,23 @@ def _complete_gemini(system: str, user: str, *, max_tokens: int, step: str, vide
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=user,
-        config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=max_tokens),
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            # gemini-2.5-flash "thinks" by default, and that reasoning spends the output-token
+            # budget -- on a complex prompt it burns the whole allowance and returns
+            # `response.text is None`, which then crashes json.loads far downstream. These calls
+            # want structured JSON, not chain-of-thought, so spend every token on the answer.
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+        ),
     )
     record_actual(ledger_id, estimated)  # no usage-based pricing available; reservation stands as actual
-    return response.text
+    text = response.text
+    if not text:
+        # A safety block or an all-thinking response still yields no text -- fail loudly here
+        # rather than handing an empty string to parse_json (a char-0 crash with no context).
+        raise LLMError("Gemini returned no text (blocked or empty response)")
+    return text
 
 
 def parse_json(text: str) -> dict:
