@@ -27,8 +27,13 @@
 
 - [ ] **ANTHROPIC_API_KEY** (Claude — script generation).
 - [ ] **GEMINI_API_KEY** _(optional fallback)_.
-- [ ] **ELEVENLABS_API_KEY** + **ELEVENLABS_VOICE_ID** (buy Starter ~$5/mo; pick a BBC-style deep male voice).
-- [ ] **OPENAI_API_KEY** _(optional — TTS-1 fallback when ElevenLabs quota runs out)_.
+- [ ] **ELEVENLABS_API_KEY** + **ELEVENLABS_VOICE_ID** — buy the **Creator tier ($22/mo, 100k chars/mo ≈
+      5–6 narrations/mo)**; ElevenLabs is the ONLY publishable voice. Pick a **custom/cloned or
+      deliberately distinctive** voice, NOT a popular default preset (a widely-reused default voice is
+      itself an inauthenticity signal). Record the voice's provenance (cloned-from source / library id): `____________`.
+- [ ] ~~**OPENAI_API_KEY**~~ — no longer used for TTS. The only fallback when ElevenLabs is unavailable is
+      **edge-tts**, which produces a **draft-only** narration: the video is flagged `needs_revoice` and the
+      publisher refuses to upload it until it is re-voiced with the brand voice (`operator revoice`).
 - [ ] **PEXELS_API_KEY** + **PIXABAY_API_KEY** (free dev keys).
 - [ ] **FAL_KEY** _(optional — cloud image fallback; P0 uses local/stock)_.
 - [ ] **TELEGRAM_BOT_TOKEN** (from @BotFather `/newbot`) + **TELEGRAM_CHAT_ID** (run `operator get-chat-id`).
