@@ -38,6 +38,14 @@ def publish(
         video = s.get(Video, video_id)
         if video is None:
             raise ValueError(f"video {video_id} not found")
+        # Gate BEFORE any quota/checkpoint work: a fallback-voiced draft is never publishable
+        # (mixed/inconsistent narrator voice is itself an inauthenticity signal) -- refuse
+        # immediately rather than spending upload quota on something `revoice` must redo anyway.
+        if video.needs_revoice:
+            raise ValueError(
+                f"video {video_id} needs re-voice with the brand voice before publish "
+                f"(run `operator revoice --video-id {video_id}`)"
+            )
         video_path, thumb_path, script_path = video.video_path, video.thumb_path, video.script_path
         state, title, tags, description = video.state, video.title, video.tags, video.description
         existing = s.scalar(
@@ -51,8 +59,11 @@ def publish(
     script = (
         metadata_builder.load_script(script_path)
         if script_path
+        # No script.json (e.g. a manually-seeded upload): the on-the-wire `title_options`
+        # shape is always list[{title, thumbnail_text}] dicts — never bare strings, or the
+        # dict-access consumers below (pick_title, ab_variants) crash.
         else {
-            "title_options": [title] if title else [],
+            "title_options": [{"title": title, "thumbnail_text": ""}] if title else [],
             "tags": tags or [],
             "description": description or "",
             "sources": [],
@@ -61,9 +72,13 @@ def publish(
     # Operator edits (title/description/tags) are written to the DB Video row only (by the
     # review bot), so they must override the original script.json here — otherwise a
     # review-time correction is silently dropped and the uncorrected metadata ships.
-    # script.json-only fields (e.g. sources) are preserved.
+    # script.json-only fields (e.g. sources) are preserved. Keep the dict shape: promote the
+    # operator title to the front, drop any existing option with the same title.
     if title:
-        script["title_options"] = [title, *[t for t in script.get("title_options", []) if t != title]]
+        script["title_options"] = [
+            {"title": title, "thumbnail_text": ""},
+            *[o for o in script.get("title_options", []) if o.get("title") != title],
+        ]
     if description:
         script["description"] = description
     if tags:

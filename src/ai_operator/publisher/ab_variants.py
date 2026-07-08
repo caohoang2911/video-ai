@@ -32,7 +32,7 @@ def _latest_upload(s, video_id: int) -> Upload | None:
     )
 
 
-def submit(video_id: int, title_options: list[str], thumb_paths: list[str]) -> None:
+def submit(video_id: int, title_options: list[dict], thumb_paths: list[str]) -> None:
     """Print the manual Studio A/B checklist and mark `ab_status='running'`.
 
     Idempotent: once `ab_status` is set, a second call is a no-op — a Studio test
@@ -52,12 +52,14 @@ def submit(video_id: int, title_options: list[str], thumb_paths: list[str]) -> N
     _print_checklist(video_id, title_options, thumb_paths)
 
 
-def _print_checklist(video_id: int, title_options: list[str], thumb_paths: list[str]) -> None:
+def _print_checklist(video_id: int, title_options: list[dict], thumb_paths: list[str]) -> None:
     lines = [
         f"--- Manual YouTube Studio A/B checklist (video_id={video_id}) ---",
         "1. Open YouTube Studio -> Content -> select this video -> 'Test & compare'.",
         "2. Title test: add these variants (2-3):",
-        *[f"   - {t}" for t in title_options[:3]],
+        # title_options are {title, thumbnail_text} dicts loaded from script.json (or built
+        # dict-shaped in publish.py) — read the title, never render the whole dict.
+        *[f"   - {t.get('title', '')}" for t in title_options[:3]],
         "3. Thumbnail test: upload these variants:",
         *[f"   - {p}" for p in thumb_paths[:3]],
         "4. After YouTube finishes the test, record the winner with:",

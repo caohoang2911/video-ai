@@ -47,6 +47,30 @@ class ShotBeat(BaseModel):
     mood: str
 
 
+class PayoffNode(BaseModel):
+    """One attention-reset beat plus how surprising it is (1=obvious, 5=genuine twist).
+
+    The score is an editorial-value signal: a script padded with low-surprise "payoffs"
+    is exactly the mass-produced pattern YouTube's inauthenticity detection penalizes, so
+    script_generator rejects a script that can't field at least two genuinely surprising ones.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    text: str
+    surprise_score: int = Field(ge=1, le=5)
+
+
+class TitleOption(BaseModel):
+    """One title paired with its own thumbnail overlay text — the two are designed together
+    (the thumbnail line completes/contrasts the title) rather than a title reusing a hook line."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str
+    thumbnail_text: str = ""
+
+
 class ScriptOutput(BaseModel):
     """Full script.json payload written by script_generator, read by phase 03/04."""
 
@@ -55,9 +79,9 @@ class ScriptOutput(BaseModel):
     narration: str
     hooks: list[Hook] = Field(min_length=2, max_length=3)
     pattern: str
-    payoff_nodes: list[str] = Field(min_length=5)
+    payoff_nodes: list[PayoffNode] = Field(min_length=5)
     shot_list: list[ShotBeat] = Field(min_length=10)
-    title_options: list[str] = Field(min_length=3, max_length=3)
+    title_options: list[TitleOption] = Field(min_length=3, max_length=3)
     description: str
     tags: list[str] = Field(min_length=1)
     sources: list[str] = Field(min_length=2)

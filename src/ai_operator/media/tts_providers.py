@@ -1,14 +1,21 @@
-"""TTS provider fallback chain: ElevenLabs -> OpenAI TTS-1 -> Chatterbox (optional/local) ->
-edge-tts. ElevenLabs Starter is 30k chars/month (~3 videos) -- nowhere near enough for P0
-volume, so quota/429 must fall through to a cheap paid tier before the always-free tier.
+"""TTS providers for ONE brand voice: ElevenLabs (the only publishable narrator) with an
+edge-tts draft-only fallback. A single video is never a mix of two providers -- mixing
+would itself be an inauthenticity signal, and `Video.needs_revoice` exists precisely to
+force a full re-synth back onto ElevenLabs whenever edge-tts had to stand in.
+
+OpenAI TTS-1 and the local Chatterbox clone are intentionally NOT in this chain: a
+different-sounding fallback voice is pointless for a single-brand-voice channel (the point
+of the ElevenLabs voice is that it's the ONE consistent narrator across every video).
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from ..config import settings
+from ..cost import elevenlabs_char_guard as char_guard
 from ..cost.budget_guard import BudgetExceeded, check_and_reserve, record_actual
 from ..cost.estimator import estimate_step
 from ..logging_setup import get_logger
@@ -17,16 +24,15 @@ from .tts_chunker import TextChunk
 log = get_logger("tts_providers")
 
 EDGE_TTS_VOICE = "en-US-ChristopherNeural"
-OPENAI_TTS_VOICE = "onyx"
 _ELEVENLABS_MODEL = "eleven_multilingual_v2"  # only model that supports previous_request_ids stitching
 
 
 class ProviderUnavailable(Exception):
-    """Provider isn't configured (missing key/package) -- skip without charging anything."""
+    """Provider isn't configured (missing key) -- skip without charging anything."""
 
 
 class ProviderFailed(Exception):
-    """Provider was attempted and errored (429/quota/network) -- try the next tier."""
+    """Provider was attempted (or pre-flighted) and can't proceed -- 429/quota/network/char-cap."""
 
 
 def synthesize_elevenlabs(
@@ -44,7 +50,12 @@ def synthesize_elevenlabs(
 
     from elevenlabs.client import ElevenLabs  # deferred: keep this module importable without the SDK too
 
-    chars_billed = len(text) + len(prev_text or "")
+    # ElevenLabs ignores `previous_text` once `previous_request_ids` is supplied -- passing
+    # both would silently drop prev_text server-side while still billing its chars against
+    # `units` below, double-counting the overlap. Null it out here so this is the ONE place
+    # that invariant is enforced, regardless of what the caller passes in.
+    effective_prev_text = None if prev_request_ids else prev_text
+    chars_billed = len(text) + len(effective_prev_text or "")
     estimated = estimate_step("elevenlabs", chars=chars_billed)
     ledger_id = check_and_reserve(
         estimated, step="tts_elevenlabs", provider="elevenlabs", video_id=video_id, units=chars_billed
@@ -62,7 +73,7 @@ def synthesize_elevenlabs(
                 "style": 0.0,
                 "use_speaker_boost": True,
             },
-            previous_text=prev_text,
+            previous_text=effective_prev_text,
             next_text=next_text,
             previous_request_ids=(prev_request_ids[-3:] or None),
         )
@@ -81,49 +92,10 @@ def synthesize_elevenlabs(
     return request_id
 
 
-def synthesize_openai_tts(text: str, out_path: Path, *, video_id: int, voice: str = OPENAI_TTS_VOICE) -> None:
-    if not settings.OPENAI_API_KEY:
-        raise ProviderUnavailable("openai: OPENAI_API_KEY not set")
-
-    from openai import OpenAI  # deferred for the same reason as elevenlabs above
-
-    estimated = estimate_step("openai", chars=len(text))
-    ledger_id = check_and_reserve(
-        estimated, step="tts_openai", provider="openai", video_id=video_id, units=len(text)
-    )
-    try:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
-        response = client.audio.speech.create(model="tts-1", voice=voice, input=text)
-        response.stream_to_file(str(out_path))
-    except Exception as exc:
-        record_actual(ledger_id, 0.0)
-        raise ProviderFailed(f"openai tts-1: {exc}") from exc
-
-    record_actual(ledger_id, estimated)
-
-
-_chatterbox_model = None  # module-level singleton -- only loaded if this tier is actually reached
-
-
-def synthesize_chatterbox(text: str, out_path: Path) -> None:
-    """Free local TTS -- only exercised when both paid tiers are exhausted/misconfigured."""
-    global _chatterbox_model
-    try:
-        if _chatterbox_model is None:
-            from chatterbox.tts import ChatterboxTTS  # heavy + optional; not a base dependency
-
-            _chatterbox_model = ChatterboxTTS.from_pretrained(device="mps")
-        import torchaudio
-
-        wav = _chatterbox_model.generate(text)
-        torchaudio.save(str(out_path), wav, _chatterbox_model.sr)
-    except Exception as exc:
-        raise ProviderFailed(f"chatterbox: {exc}") from exc
-
-
 def synthesize_edge_tts(text: str, out_path: Path, voice: str = EDGE_TTS_VOICE) -> None:
-    """Free, always-available last resort. edge_tts is async -- wrap it for sync call sites."""
-    import edge_tts
+    """Free, always-available draft-only fallback -- never the audio that gets published.
+    edge_tts is async -- wrap it for our sync call sites."""
+    import edge_tts  # deferred: keep this module importable without the SDK too
 
     async def _run() -> None:
         await edge_tts.Communicate(text, voice=voice).save(str(out_path))
@@ -131,38 +103,81 @@ def synthesize_edge_tts(text: str, out_path: Path, voice: str = EDGE_TTS_VOICE) 
     asyncio.run(_run())
 
 
-def synthesize_chunk(chunk: TextChunk, out_path: Path, *, video_id: int, prev_request_ids: list[str]) -> str:
-    """Walk the fallback chain; returns the provider name that actually produced audio.
-
-    `prev_request_ids` is mutated in place so the ElevenLabs stitching context survives
-    across chunks even when the fallback chain is invoked mid-narration.
-    """
-    try:
-        rid = synthesize_elevenlabs(
-            chunk.text,
-            out_path,
-            video_id=video_id,
-            prev_text=chunk.prev_text,
-            next_text=chunk.next_text,
-            prev_request_ids=prev_request_ids,
+def _synth_elevenlabs_chunk(
+    chunk: TextChunk, out_path: Path, *, video_id: int, prev_request_ids: list[str]
+) -> str | None:
+    """One ElevenLabs attempt, gated by the monthly character quota so we never place a call
+    we already know would blow the Creator-tier ceiling."""
+    status = char_guard.check_char_quota()
+    if status.exhausted:
+        raise ProviderFailed(
+            f"elevenlabs monthly char quota exhausted: {status.chars_used}/{status.quota} chars for {status.ym}"
         )
+    return synthesize_elevenlabs(
+        chunk.text,
+        out_path,
+        video_id=video_id,
+        prev_text=chunk.prev_text,
+        next_text=chunk.next_text,
+        prev_request_ids=prev_request_ids,
+    )
+
+
+def synthesize_video(
+    chunks: Sequence[TextChunk],
+    chunk_paths: Sequence[Path],
+    *,
+    video_id: int,
+    done_indices: set[int],
+    prev_request_ids: list[str],
+    on_chunk_done: Callable[[int, str, str | None], None],
+) -> str:
+    """Synthesize every chunk NOT in `done_indices` with exactly one provider for the whole
+    video. Returns "elevenlabs" or "edge_tts" (best-effort hint; a caller that persists
+    per-chunk provider records should treat those records as authoritative).
+
+    Resume semantics: `done_indices` chunks were already synthesized by a prior attempt --
+    never re-billed/re-synthesized here. Provider selection is per-VIDEO, decided by what
+    happens on the very first chunk this call attempts:
+    - a from-scratch attempt (`done_indices` empty) whose FIRST chunk fails on ElevenLabs
+      (quota/unavailable/failed) falls back to edge-tts for the ENTIRE narration -- a single
+      provider for the whole video, never a mix;
+    - a failure on any LATER chunk (or when resuming a partially-completed video) does NOT
+      fall back to edge -- that would mix providers with the already-ElevenLabs-synthesized
+      head. It raises instead, leaving every already-synthesized chunk untouched, so the
+      next attempt retries only the missing tail against ElevenLabs.
+    """
+    pending = [i for i in range(len(chunks)) if i not in done_indices]
+    if not pending:
+        return "elevenlabs"  # nothing left to do -- caller derives the real provider from its own records
+
+    first_idx = pending[0]
+    try:
+        rid = _synth_elevenlabs_chunk(
+            chunks[first_idx], chunk_paths[first_idx], video_id=video_id, prev_request_ids=prev_request_ids
+        )
+    except (ProviderUnavailable, ProviderFailed, BudgetExceeded) as exc:
+        if done_indices:
+            raise ProviderFailed(
+                f"elevenlabs failed resuming video {video_id} at chunk {first_idx}: {exc}"
+            ) from exc
+        log.warning(
+            "video %s: elevenlabs unavailable on the first chunk -> synthesizing the entire "
+            "narration via edge-tts (draft only; needs_revoice will be set): %s", video_id, exc,
+        )
+        for i in pending:
+            synthesize_edge_tts(chunks[i].text, chunk_paths[i])
+            on_chunk_done(i, "edge_tts", None)
+        return "edge_tts"
+
+    if rid:
+        prev_request_ids.append(rid)
+    on_chunk_done(first_idx, "elevenlabs", rid)
+
+    for i in pending[1:]:
+        rid = _synth_elevenlabs_chunk(chunks[i], chunk_paths[i], video_id=video_id, prev_request_ids=prev_request_ids)
         if rid:
             prev_request_ids.append(rid)
-        return "elevenlabs"
-    except (ProviderUnavailable, ProviderFailed, BudgetExceeded) as exc:
-        log.warning("elevenlabs unavailable/failed -> falling back to openai tts-1: %s", exc)
+        on_chunk_done(i, "elevenlabs", rid)
 
-    try:
-        synthesize_openai_tts(chunk.text, out_path, video_id=video_id)
-        return "openai"
-    except (ProviderUnavailable, ProviderFailed, BudgetExceeded) as exc:
-        log.warning("openai tts-1 unavailable/failed -> falling back to chatterbox: %s", exc)
-
-    try:
-        synthesize_chatterbox(chunk.text, out_path)
-        return "chatterbox"
-    except (ProviderUnavailable, ProviderFailed) as exc:
-        log.warning("chatterbox unavailable/failed -> falling back to edge-tts: %s", exc)
-
-    synthesize_edge_tts(chunk.text, out_path)
-    return "edge_tts"
+    return "elevenlabs"

@@ -28,6 +28,12 @@ log = get_logger("content.script_generator")
 MAX_JSON_RETRIES = 2                # spec: retry twice on invalid JSON before giving up
 CHECKPOINT_STEP = "script_generated"
 
+# Original-value gate: a documentary-exempt script must land at least this many genuinely
+# surprising payoff beats, else it reads as mass-produced filler. Tuned in one place; a
+# rejected script is logged so the threshold can be loosened if it stalls real production.
+STRONG_PAYOFF_MIN_SCORE = 3
+STRONG_PAYOFF_MIN_COUNT = 2
+
 
 def generate(topic: Topic) -> ScriptOutput:
     """Produce and persist script.json/.txt for `topic`; sets videos.state=scripted."""
@@ -55,10 +61,29 @@ def generate(topic: Topic) -> ScriptOutput:
     )
 
     script = _generate_with_retry(system, user, research_result, video_id)
+    _enforce_payoff_gate(video_id, script)
 
     _persist(video_id, script)
     topic_backlog.mark_used(topic.id)
     return script
+
+
+def _enforce_payoff_gate(video_id: int, script: ScriptOutput) -> None:
+    """Fail the video (no downstream steps) unless the script fields enough strong payoffs.
+
+    This is a content-quality reject, not a JSON-validity retry: re-prompting rarely turns a
+    flat topic into a surprising one, so mirror the research-reject path and fail hard for a
+    human look — same as `research_gate` rejecting insufficient sourcing.
+    """
+    strong = sum(1 for n in script.payoff_nodes if n.surprise_score >= STRONG_PAYOFF_MIN_SCORE)
+    if strong < STRONG_PAYOFF_MIN_COUNT:
+        reason = (
+            f"weak payoff structure: {strong} node(s) scoring >= {STRONG_PAYOFF_MIN_SCORE} "
+            f"(need {STRONG_PAYOFF_MIN_COUNT})"
+        )
+        log.warning("video %s rejected — %s", video_id, reason)
+        _fail_video(video_id, reason)
+        raise ValueError(reason)
 
 
 def _generate_with_retry(system: str, user: str, research_result: dict, video_id: int) -> ScriptOutput:
@@ -128,7 +153,9 @@ def _persist(video_id: int, script: ScriptOutput) -> None:
             assert_transition(video.state, VideoState.SCRIPTED)
             video.state = VideoState.SCRIPTED.value
         video.script_path = str(script_path)
-        video.title = script.title_options[0]
+        # `script` is the in-memory ScriptOutput here (attribute access is valid); every
+        # consumer that instead loads script.json off disk sees plain dicts and uses opt["title"].
+        video.title = script.title_options[0].title
         video.description = script.description
         video.tags = script.tags
         s.commit()

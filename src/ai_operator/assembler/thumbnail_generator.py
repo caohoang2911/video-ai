@@ -1,9 +1,10 @@
 """3 thumbnail variants generated immediately at render time (not after upload) so
-phase 06's manual YouTube-Studio A/B test always has candidates ready to go.
+the manual YouTube-Studio A/B test always has candidates ready to go.
 
-Each variant pairs a distinct key-frame with a distinct hook's `text_overlay` (script.json
-already carries 2-3 hook variants written for this exact purpose), giving genuinely
-different thumbnails instead of the same frame with cosmetic tweaks.
+Each variant pairs a distinct key-frame with one title option's `thumbnail_text` — the
+overlay line written to pair with that specific title (script.json carries 3 title options),
+so the A/B title test and thumbnail test line up variant-for-variant instead of overlaying a
+generic hook line on every frame.
 """
 
 from __future__ import annotations
@@ -59,10 +60,12 @@ def generate(video_id: int) -> list[str]:
 
 
 def _overlay_texts(script_path: Path) -> list[str]:
+    """Thumbnail overlay lines, one per title option (dict access — script.json entries are
+    `{title, thumbnail_text}`, not pydantic objects). Empty when script.json is absent."""
     if not script_path.exists():
         return []
     script = json.loads(script_path.read_text(encoding="utf-8"))
-    return [h.get("text_overlay", "").upper() for h in script.get("hooks", [])]
+    return [o.get("thumbnail_text", "").upper() for o in script.get("title_options", [])]
 
 
 def _probe_duration(video_path: Path) -> float:

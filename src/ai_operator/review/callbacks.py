@@ -38,13 +38,26 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         log.warning("dropped callback from non-whitelisted chat %s", chat.id if chat else "?")
         return
 
-    await query.answer()  # required: clears the tap spinner regardless of what happens next
+    # Parse BEFORE answering: Telegram allows exactly ONE answer() per callback query, and a
+    # needs_revoice approval tap must short-circuit with its OWN alert-answer below. Everything
+    # else falls through to the unconditional answer() that clears the tap spinner.
     code, _, vid_raw = (query.data or "").partition(":")
     try:
         video_id = int(vid_raw)
     except ValueError:
+        await query.answer()  # still clear the spinner on a malformed tap
         log.warning("malformed callback_data %r", query.data)
         return
+
+    # A fallback-voiced (edge-tts draft) video can never be approved for publish: block the
+    # approval taps with a single alert and leave state untouched. Must sit ahead of the general
+    # answer() (a second answer() would raise) and never reach decision_finalize.
+    if code in (dc.PASS_POLICY, dc.PASS_QUALITY) and _needs_revoice(video_id):
+        await query.answer("Blocked: run `revoice` first (brand voice required)", show_alert=True)
+        log.info("blocked %s on video %s — needs_revoice", code, video_id)
+        return
+
+    await query.answer()  # required: clears the tap spinner regardless of what happens next
 
     if code == _OPEN_REJECT_POLICY:
         await query.edit_message_reply_markup(
@@ -78,6 +91,12 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     await finalize_decision(ctx, chat.id, video_id, code, reason=None, query=query)
+
+
+def _needs_revoice(video_id: int) -> bool:
+    with SessionLocal() as s:
+        video = s.get(Video, video_id)
+        return bool(video and video.needs_revoice)
 
 
 def _current_tier_keyboard(video_id: int):

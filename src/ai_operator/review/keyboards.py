@@ -10,7 +10,21 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import decision_codes as dc
 
-CHECKLIST_ITEMS: tuple[str, ...] = ("audio", "video", "caption", "policy", "visuals")
+CHECKLIST_ITEMS: tuple[str, ...] = (
+    "audio", "video", "caption", "policy", "visuals",
+    # EDSA (Educational/Documentary/Scientific/Artistic) evidence — the concrete signals that
+    # earn YouTube's documentary exception. `edsa5w` asks the reviewer to confirm the facts are
+    # spoken in the AUDIO (not just in metadata); hook/payoff confirm the editorial structure.
+    "edsa5w", "hook", "payoff",
+)
+
+# Descriptive labels for items whose short callback key isn't self-explanatory; anything not
+# listed falls back to the key itself (the original single-word items read fine as-is).
+CHECKLIST_LABELS: dict[str, str] = {
+    "edsa5w": "WHO/WHAT/WHEN/WHERE/WHY in narration?",
+    "hook": "hook present",
+    "payoff": "payoff present",
+}
 
 
 def tier1_keyboard(video_id: int, preview_url: str | None = None) -> InlineKeyboardMarkup:
@@ -57,7 +71,7 @@ def checklist_keyboard(video_id: int, checked: dict[str, bool]) -> InlineKeyboar
     rows = [
         [
             InlineKeyboardButton(
-                f"{'✅' if checked.get(item) else '⬜'} {item}",
+                f"{'✅' if checked.get(item) else '⬜'} {CHECKLIST_LABELS.get(item, item)}",
                 callback_data=f"CHK_{item.upper()}:{video_id}",
             )
         ]

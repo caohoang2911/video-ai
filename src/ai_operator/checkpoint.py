@@ -60,6 +60,25 @@ def artifacts_of(video_id: int | str, step: str) -> dict | None:
     return None
 
 
+def invalidate(video_id: int | str, step: str) -> None:
+    """Drop `step`'s entry so a later `is_done(video_id, step)` returns False and the step
+    re-enters. Inverse of `write`. Used by `revoice` to force `tts_narration` + `assemble`
+    to re-run instead of short-circuiting on a stale (e.g. edge-tts or pre-revoice) artifact.
+    No-op if there's no checkpoint file, or the step was never recorded, for either video.
+    """
+    data = read(video_id)
+    if not data:
+        return
+    remaining = [e for e in data.get("steps", []) if e["step"] != step]
+    if len(remaining) == len(data.get("steps", [])):
+        return  # step wasn't present -- nothing to invalidate
+    data["steps"] = remaining
+    if data.get("last_step") == step:
+        # last_step must keep pointing at a real, still-present entry (or None if empty).
+        data["last_step"] = remaining[-1]["step"] if remaining else None
+    _atomic_write(video_id, data)
+
+
 def _atomic_write(video_id: int | str, data: dict) -> None:
     path = _path(video_id)
     tmp = path.with_suffix(".tmp")

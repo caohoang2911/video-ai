@@ -37,10 +37,14 @@ def build_description(script: dict, *, music_credit: str = DEFAULT_MUSIC_CREDIT)
 
 
 def pick_title(script: dict, override: str | None = None) -> str:
-    """Choose the video title: explicit override (e.g. a picked A/B winner) or the
-    first `title_options` entry from script.json, truncated to the 100-char cap."""
+    """Choose the video title: explicit override (e.g. a picked A/B winner) or the first
+    `title_options` entry from script.json, truncated to the 100-char cap.
+
+    Disk-loaded `title_options` entries are `{title, thumbnail_text}` dicts, not bare
+    strings — read `opt["title"]`, never attribute-access."""
     options = script.get("title_options") or []
-    title = override or (options[0] if options else script.get("title") or "Untitled")
+    first = options[0].get("title") if options else None
+    title = override or first or script.get("title") or "Untitled"
     return title[:MAX_TITLE_LEN]
 
 

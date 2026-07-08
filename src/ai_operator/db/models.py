@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, utcnow
@@ -42,6 +42,10 @@ class Video(Base):
     tags: Mapped[list | None] = mapped_column(JSON, default=None)
     duration_sec: Mapped[int | None] = mapped_column(Integer, default=None)
     reject_reason: Mapped[str | None] = mapped_column(Text, default=None)
+    # True whenever the narration was NOT synthesized end-to-end with the brand ElevenLabs
+    # voice (edge-tts fallback draft) -- the publisher refuses to upload while this is set,
+    # since a mixed/inconsistent narrator voice is itself an inauthenticity signal.
+    needs_revoice: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -56,7 +60,7 @@ class Asset(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     video_id: Mapped[int] = mapped_column(ForeignKey("videos.id"), index=True)
-    kind: Mapped[str] = mapped_column(String(16))          # stock|gen|music
+    kind: Mapped[str] = mapped_column(String(16))          # stock|gen|music|video_broll
     source: Mapped[str] = mapped_column(String(24))        # pexels|pixabay|sdxl|fal|audio_library
     url_or_path: Mapped[str] = mapped_column(String(1000))
     license: Mapped[str | None] = mapped_column(String(120), default=None)

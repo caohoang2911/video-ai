@@ -22,12 +22,16 @@ def build_caption(video: Video) -> str:
     snippet = (video.description or "")[:200] or "(no description)"
     research_depth = _research_depth(video.script_path)
     asset_count = _asset_count(video.id)
+    # Surface the re-voice block up front so the reviewer knows an approval tap will bounce
+    # (the callback handler hard-blocks PASS_* until `revoice` restores the brand voice).
+    revoice_warn = "⚠ NEEDS RE-VOICE — approval blocked until `revoice` runs\n\n" if video.needs_revoice else ""
 
     # Plain text (no Markdown): AI-generated titles/descriptions routinely contain
     # unbalanced _ * ` [ chars that make Telegram reject a Markdown-parsed caption with
     # HTTP 400, which would stall the review gate. Cosmetic emphasis isn't worth that risk.
     return (
         f"TIER-1 POLICY REVIEW — video #{video.id}\n\n"
+        f"{revoice_warn}"
         f"Title: {video.title or '(untitled)'}\n"
         f"Duration: {duration}  ·  Research depth: {research_depth}  ·  Visuals: {asset_count}\n"
         f"Tags: {tags_preview}\n\n"
