@@ -1,0 +1,67 @@
+# Hand-written originality seed for the "Forgotten Maritime Disasters" niche.
+# Kept in content/ (not data/, which is gitignored) — this list IS the human
+# authorship signal that anchors the channel's originality, so it must ship with git.
+#
+# Each entry: title (real event), angle (the unique POV/thread the script builds
+# around), source_hint (the TYPE of record research_gate should look for/cite —
+# not a pre-verified citation; research_gate still runs and can still reject).
+topics:
+  - title: "SS Sultana: The Deadliest Disaster America Refused to Remember"
+    angle: "Overshadowed the same week by Lincoln's assassination coverage — the worst maritime disaster in US history got a fraction of the ink."
+    source_hint: "Congressional inquiry testimony, Sultana Disaster Museum records, contemporary Memphis newspaper archives"
+
+  - title: "MV Wilhelm Gustloff: The Single Deadliest Sinking in History"
+    angle: "A refugee evacuation ship torpedoed in the last winter of WWII — more deaths than Titanic and Lusitania combined, buried by the chaos of a collapsing front."
+    source_hint: "Soviet submarine war diaries, German refugee evacuation records, post-war survivor testimony archives"
+
+  - title: "RMS Empress of Ireland: Titanic's Forgotten Twin Tragedy"
+    angle: "Sank in 14 minutes on the St. Lawrence just two years after Titanic — then vanished from public memory as WWI broke out weeks later."
+    source_hint: "Canadian government inquiry (Lord Mersey commission) records, Quebec maritime museum archives"
+
+  - title: "The SS Eastland: A Disaster That Never Left the Dock"
+    angle: "A pleasure cruise for factory workers that capsized in 20 feet of water without ever leaving the pier — an engineering failure hiding in plain sight."
+    source_hint: "Chicago coroner's inquest records, Eastland Disaster Historical Society archives"
+
+  - title: "General Slocum: New York's Deadliest Day Before 9/11"
+    angle: "A church excursion steamer fire that wiped out a whole immigrant neighborhood's children in one afternoon, reshaping a community forever."
+    source_hint: "NYC fire marshal reports, Little Germany (Kleindeutschland) community archives, contemporary press"
+
+  - title: "USS Indianapolis: The Secret Mission That Sank Into Silence"
+    angle: "Delivered the atomic bomb components, then vanished for days uncounted — the survivors' shark-infested wait was a direct result of wartime secrecy."
+    source_hint: "US Navy court-martial transcripts, survivor oral history archives, declassified mission logs"
+
+  - title: "MV Doña Paz: The Deadliest Peacetime Sea Disaster No One Recalls"
+    angle: "A ferry collision that killed more people than Titanic — undercounted for years because passenger manifests were routinely falsified."
+    source_hint: "Philippine Coast Guard board of inquiry records, Sulpicio Lines court filings, contemporary Manila press"
+
+  - title: "The Halifax Explosion: When a Ship Collision Leveled a City"
+    angle: "A wartime munitions-ship collision produced the largest human-made explosion before Hiroshima — and it started as an ordinary harbor traffic mistake."
+    source_hint: "Halifax Explosion Commission inquiry transcripts, Maritime Museum of the Atlantic archives"
+
+  - title: "MS Estonia: The Ferry Disaster Still Under Dispute"
+    angle: "A bow-visor failure in the Baltic that killed hundreds in under an hour — and spawned decades of competing official and independent investigations."
+    source_hint: "Joint Accident Investigation Commission (JAIC) final report, Estonian/Swedish/Finnish government archives"
+
+  - title: "SS Kiangya: Asia's Titanic That the West Never Learned About"
+    angle: "A refugee-packed steamer destroyed by a leftover WWII mine off Shanghai — a death toll rivaling Titanic, absent from most Western disaster lists."
+    source_hint: "Shanghai port authority records, contemporary Chinese-language press archives, refugee survivor accounts"
+
+  - title: "RMS Lusitania: The Cargo Manifest Britain Didn't Want Read"
+    angle: "Sunk in 18 minutes by a single torpedo — and the ship's secret munitions cargo turned a war atrocity into a century-long controversy."
+    source_hint: "British Board of Trade inquiry records, Cunard Line archives, declassified Admiralty cargo manifests"
+
+  - title: "MV Le Joola: West Africa's Deadliest Shipwreck"
+    angle: "A state-run ferry, chronically overloaded and under-inspected, capsized off Senegal — a case study in normalized institutional neglect."
+    source_hint: "Senegalese government commission of inquiry, UN maritime safety reports, regional press archives"
+
+  - title: "SS Princess Sophia: Lost Without a Single Survivor"
+    angle: "Grounded for two days in full view of rescue ships before a storm finished what the reef started — every soul aboard lost, and the news arrived the same week as the WWI armistice."
+    source_hint: "US and Canadian court of inquiry transcripts, Alaska State Library historical archives"
+
+  - title: "HMHS Britannic: Titanic's Sister Ship Sunk by a Hidden Mine"
+    angle: "Built with Titanic's lessons baked into its design, it still sank in under an hour — proof that engineering fixes can't out-run wartime hazards."
+    source_hint: "British Admiralty wreck inquiry records, Mediterranean mine-laying campaign archives, survivor nurse diaries"
+
+  - title: "MV Tampomas II: Indonesia's Slow-Motion Sea Disaster"
+    angle: "A fire at sea that burned for over 24 hours while rescue coordination faltered — a disaster survivors say could have ended with zero deaths."
+    source_hint: "Indonesian Directorate General of Sea Transportation inquiry, regional press archives, survivor testimony"

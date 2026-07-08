@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "operator"
+version = "0.1.0"
+description = "Semi-automated faceless YouTube documentary pipeline (script -> voice -> visuals -> assemble -> review -> publish)"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # --- foundation (phase 01) ---
+    "SQLAlchemy>=2.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
+    "typer>=0.12",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    # --- content engine (phase 02) ---
+    "anthropic>=0.40",
+    "google-genai>=1.0",          # Gemini fallback (optional at runtime)
+    # --- media engine (phase 03) ---
+    "elevenlabs>=2.5",            # v2 API: text_to_speech.with_raw_response.convert + previous_request_ids
+    "edge-tts>=6.1",
+    "openai>=1.40",               # OpenAI TTS-1 fallback
+    "requests>=2.31",
+    "requests-cache>=1.2",
+    "requests-ratelimiter>=0.6",
+    # --- assembler (phase 04) ---
+    "moviepy>=2.2",               # 2.2.1: `from moviepy import ...`, `.with_*` API
+    "Pillow==11.1.0",             # research-confirmed stable for MoviePy 2.2.1 TextClip (12.x breaks; 10.2.0 fallback)
+    "faster-whisper>=1.2",        # 1.2.x; CPU-only on Apple Silicon (no Metal)
+    # --- review gate (phase 05) ---
+    "python-telegram-bot>=21.8",
+    # --- publisher + scheduler (phase 06/07) ---
+    "google-api-python-client>=2.100",
+    "google-auth-oauthlib>=1.2",
+    "APScheduler>=3.11,<4",
+    # --- topic dedup (phase 01/02) ---
+    "sentence-transformers>=3.0", # all-MiniLM-L6-v2, CPU, lazy-loaded
+]
+
+[project.optional-dependencies]
+# heavy / opt-in — install only when local generation or cloud fallback is needed
+sdxl = ["diffusers>=0.30", "torch>=2.2", "transformers>=4.44", "accelerate>=0.33"]
+cloud = ["fal-client>=0.5"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+operator = "ai_operator.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

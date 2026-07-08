@@ -1,0 +1,72 @@
+"""Central settings loaded from .env via pydantic-settings.
+
+All API keys are Optional so the foundation (db init, cost/checkpoint logic) works
+with no .env present. Never log the *values* here — only key names when missing.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Project paths (this file is src/operator/config.py -> project root is parents[2])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+CHECKPOINT_DIR = OUTPUT_DIR / "checkpoints"
+LOG_DIR = OUTPUT_DIR / "logs"
+PROMPTS_DIR = PROJECT_ROOT / "prompts"
+
+
+def ensure_dirs() -> None:
+    """Create runtime directories (idempotent)."""
+    for d in (DATA_DIR, OUTPUT_DIR, CHECKPOINT_DIR, LOG_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
+
+    # --- content (phase 02) ---
+    ANTHROPIC_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
+
+    # --- tts (phase 03) ---
+    ELEVENLABS_API_KEY: str | None = None
+    ELEVENLABS_VOICE_ID: str | None = None
+    OPENAI_API_KEY: str | None = None
+
+    # --- visuals (phase 03) ---
+    PEXELS_API_KEY: str | None = None
+    PIXABAY_API_KEY: str | None = None
+    FAL_KEY: str | None = None
+
+    # --- youtube (phase 06) ---
+    YT_CLIENT_ID: str | None = None
+    YT_CLIENT_SECRET: str | None = None
+    YT_REFRESH_TOKEN: str | None = None
+    YT_CHANNEL_ID: str | None = None
+
+    # --- telegram (phase 05) ---
+    TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_CHAT_ID: str | None = None
+
+    # --- infra / guardrails (phase 01) ---
+    DB_URL: str = "sqlite:///data/operator.db"
+    MONTHLY_BUDGET: float = 500.0
+    LOG_LEVEL: str = "INFO"
+
+    # --- channel config (phase 02/06) ---
+    NICHE: str = "Forgotten Maritime Disasters"
+    YT_CATEGORY_ID: str = "27"  # 27 = Education
+    WEEKLY_VIDEO_CAP: int = 3
+
+    def missing(self, keys: list[str]) -> list[str]:
+        """Return the subset of `keys` that are unset/empty (for pre-flight checks)."""
+        return [k for k in keys if not getattr(self, k, None)]
+
+
+settings = Settings()

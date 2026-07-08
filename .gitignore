@@ -1,0 +1,37 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# === Virtual env ===
+.venv/
+venv/
+
+# === Secrets — NEVER commit ===
+.env*
+!.env.example
+client_secret.json
+token.json
+*.key
+*.pem
+
+# === App data / generated artifacts ===
+data/
+output/
+*.db
+*.db-wal
+*.db-shm
+.requests_cache.sqlite
+
+# === Models / heavy caches ===
+models/
+.cache/
+
+# === OS / editor ===
+.DS_Store
+.idea/
+.vscode/
