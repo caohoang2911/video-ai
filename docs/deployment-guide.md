@@ -45,6 +45,32 @@ launchctl unload ~/Library/LaunchAgents/com.aioperator.scheduler.plist   # stop 
 launchd stdout/stderr go to `output/logs/launchd.{out,err}.log`; the app's own rotating log
 is `output/logs/operator.log`.
 
+### 4. Web control panel (optional, alongside the scheduler)
+
+A browser control panel + JSON API to view and drive the pipeline. Runs as its own long-lived
+process; the scheduler must also be running for it to be useful (the panel only *enqueues* heavy
+work — the scheduler drains the `jobs` table and executes it).
+
+```bash
+operator run-web                  # serves http://127.0.0.1:8000
+operator run-web --port 9000      # override; host defaults to 127.0.0.1
+```
+
+Up to three processes share the one SQLite DB (WAL mode):
+
+| Process              | Role                                                        |
+|----------------------|------------------------------------------------------------|
+| `operator run-scheduler` | executes queued jobs + the produce/publish/analytics loop |
+| `operator run-web`   | control panel + API (enqueues jobs; never runs heavy work) |
+| `operator run-bot`   | Telegram review (optional; coexists with the panel)        |
+
+**Security:** binds `127.0.0.1` only and has **no auth** by design — the trust boundary is the
+loopback interface. Do NOT expose it publicly or bind `0.0.0.0`. For remote access, tunnel over
+SSH (`ssh -L 8000:127.0.0.1:8000 host`) rather than changing the bind.
+
+Pages: `/` dashboard, `/videos`, `/videos/{id}`, `/topics`, `/jobs`, `/costs`, `/analytics`.
+Every page has a JSON twin under `/api/...` (e.g. `curl http://127.0.0.1:8000/api/videos`).
+
 ## Monitoring
 
 ```bash

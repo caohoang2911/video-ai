@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Video #{{ video.id }}{% endblock %}
+{% block content %}
+{% set msg = request.query_params.get('msg') %}
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+<h1>Video #{{ video.id }} <span class="pill">{{ video.state }}</span></h1>
+<p class="muted">chủ đề {{ video.topic_id or '—' }} · tạo {{ video.created_at }} · cập nhật {{ video.updated_at }}
+  {% if video.needs_revoice %} · <b class="warn">cần lồng tiếng lại</b>{% endif %}</p>
+
+<section class="grid">
+  <div class="card">
+    <h3>Thông tin</h3>
+    <p><b>{{ video.title or '(chưa có tiêu đề)' }}</b></p>
+    <p class="muted">{{ video.description or '(chưa có mô tả)' }}</p>
+    <p class="muted">thẻ: {{ video.tags | join(', ') if video.tags else '—' }}</p>
+    <p class="muted">thời lượng: {{ video.duration_sec or '—' }} giây</p>
+    {% if video.reject_reason %}<p class="bad">lý do từ chối: {{ video.reject_reason }}</p>{% endif %}
+  </div>
+  <div class="card">
+    <h3>Xem trước</h3>
+    {% if video.video_url %}<video src="{{ video.video_url }}" controls preload="metadata"></video>
+    {% else %}<p class="muted">chưa có file final.mp4 trong output/</p>{% endif %}
+    {% if video.thumb_url %}<img src="{{ video.thumb_url }}" alt="ảnh đại diện" class="thumb">{% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <h3>Quyết định duyệt</h3>
+  {% if allowed_decisions %}
+  <form method="post" action="/videos/{{ video.id }}/decision" class="stack">
+    <label>Mã quyết định
+      <select name="code">{% for c in allowed_decisions %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select>
+    </label>
+    <label>Lý do <input name="reason" placeholder="bắt buộc với các mã kết thúc bằng _OTHER"></label>
+    <details>
+      <summary>Sửa nội dung (chỉ áp dụng cho mã EDIT_*)</summary>
+      <label>Tiêu đề <input name="title"></label>
+      <label>Mô tả <textarea name="description" rows="2"></textarea></label>
+      <label>Thẻ <input name="tags" placeholder="thẻ1, thẻ2"></label>
+    </details>
+    <button type="submit">Áp dụng quyết định</button>
+  </form>
+  {% else %}<p class="muted">Trạng thái “{{ video.state }}” không cho phép quyết định nào lúc này.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h3>Chạy lại một bước sản xuất</h3>
+  <p class="muted">Bấm để thêm việc vào hàng đợi; bộ lập lịch sẽ chạy.</p>
+  <div class="btnrow">
+    {% for cmd in ['gen-audio', 'gen-visuals', 'revoice', 'assemble', 'publish'] %}
+    <form method="post" action="/videos/{{ video.id }}/enqueue/{{ cmd }}">
+      <button type="submit">{{ cmd }}</button>
+    </form>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <h3>Bản thắng thử nghiệm A/B</h3>
+  <form method="post" action="/videos/{{ video.id }}/set-winner" class="stack">
+    <label>Tiêu đề thắng <input name="title"></label>
+    <label>Đường dẫn ảnh đại diện thắng <input name="thumb"></label>
+    <button type="submit">Lưu bản thắng</button>
+  </form>
+  {% if upload %}<p class="muted">tải lên: {{ upload.status }} · {{ upload.youtube_video_id or '—' }}
+    · A/B {{ upload.ab_status or 'none' }}</p>{% endif %}
+</section>
+
+<section class="card">
+  <h3>Tài nguyên media ({{ assets | length }})</h3>
+  <table><thead><tr><th>Loại</th><th>Nguồn</th><th>Giấy phép</th><th>Đường dẫn</th></tr></thead><tbody>
+  {% for a in assets %}<tr><td>{{ a.kind }}</td><td>{{ a.source }}</td><td>{{ a.license or '—' }}</td>
+    <td class="muted small">{{ a.url_or_path }}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">không có</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+
+<section class="card">
+  <h3>Chi phí đã ghi ({{ costs | length }})</h3>
+  <table><thead><tr><th>Bước</th><th>Nhà cung cấp</th><th>Đơn vị</th><th>Chi phí</th><th>Tháng</th></tr></thead><tbody>
+  {% for c in costs %}<tr><td>{{ c.step }}</td><td>{{ c.provider }}</td><td>{{ c.units }}</td>
+    <td>${{ '%.4f' | format(c.cost or 0) }}</td><td>{{ c.ym }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">không có</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+
+<section class="card">
+  <h3>Lịch sử quyết định ({{ decisions | length }})</h3>
+  <table><thead><tr><th>Nhóm</th><th>Mã</th><th>Lý do</th><th>Thời điểm</th></tr></thead><tbody>
+  {% for d in decisions %}<tr><td>{{ d.tier }}</td><td>{{ d.code }}</td><td>{{ d.reason or '—' }}</td>
+    <td class="muted">{{ d.at }}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">không có</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+{% endblock %}

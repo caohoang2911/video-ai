@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Chi phí{% endblock %}
+{% block content %}
+<h1>Sổ chi phí</h1>
+<p class="muted">Gộp theo tháng + nhà cung cấp (chi phí thực, thiếu thì lấy ước tính).</p>
+<table>
+  <thead><tr><th>Tháng</th><th>Nhà cung cấp</th><th>Số lần</th><th>Chi phí</th></tr></thead>
+  <tbody>
+  {% for c in costs %}
+    <tr><td>{{ c.ym }}</td><td>{{ c.provider }}</td><td>{{ c.calls }}</td><td>${{ '%.2f' | format(c.cost) }}</td></tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">Chưa ghi nhận chi phí.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

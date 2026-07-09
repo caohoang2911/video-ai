@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Thống kê{% endblock %}
+{% block content %}
+<h1>Thống kê</h1>
+<p class="muted">Số liệu mới nhất của mỗi video đã đăng.</p>
+<table>
+  <thead><tr><th>YouTube ID</th><th>Tính đến ngày</th><th>Lượt xem</th><th>Giữ chân</th><th>CTR</th><th>RPM</th><th>Doanh thu ước tính</th></tr></thead>
+  <tbody>
+  {% for a in analytics %}
+    <tr>
+      <td class="small">{{ a.youtube_video_id }}</td>
+      <td class="muted">{{ a.as_of_date }}</td>
+      <td>{{ a.views }}</td>
+      <td>{{ a.avg_view_pct }}%</td>
+      <td>{{ a.ctr }}%</td>
+      <td>{{ a.rpm }}</td>
+      <td>${{ '%.2f' | format(a.est_revenue) }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">Chưa có thống kê.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Video{% endblock %}
+{% block content %}
+<h1>Video</h1>
+
+<form method="get" class="filter">
+  <label>Trạng thái
+    <select name="state" onchange="this.form.submit()">
+      <option value="">tất cả</option>
+      {% for st in states %}<option value="{{ st }}" {{ 'selected' if st == state else '' }}>{{ st }}</option>{% endfor %}
+    </select>
+  </label>
+  <noscript><button type="submit">Lọc</button></noscript>
+</form>
+
+<table>
+  <thead><tr><th>ID</th><th>Trạng thái</th><th>Tiêu đề</th><th>Thời lượng (giây)</th><th>Cần lồng tiếng lại?</th><th>Cập nhật lúc</th></tr></thead>
+  <tbody>
+  {% for v in videos %}
+    <tr>
+      <td><a href="/videos/{{ v.id }}">#{{ v.id }}</a></td>
+      <td><span class="pill">{{ v.state }}</span></td>
+      <td>{{ v.title or '—' }}</td>
+      <td>{{ v.duration_sec or '—' }}</td>
+      <td>{{ 'có' if v.needs_revoice else '' }}</td>
+      <td class="muted">{{ v.updated_at }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">Chưa có video.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

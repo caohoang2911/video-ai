@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -71,3 +72,24 @@ class TopicHistory(Base):
     topic_name: Mapped[str] = mapped_column(String(300))
     embedding: Mapped[bytes] = mapped_column(LargeBinary)   # float32[384] as raw bytes
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Job(Base):
+    """Single-table work queue. The web control panel writes `pending` rows; the scheduler's
+    drain loop claims and runs them against the existing pipeline (web never runs heavy work).
+    `idempotency_key` collapses double-clicks: enqueue reuses an existing pending/running row
+    with the same key instead of inserting a duplicate."""
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    command: Mapped[str] = mapped_column(String(40), index=True)  # gen-audio|assemble|publish|...
+    video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), default=None)
+    topic_id: Mapped[int | None] = mapped_column(ForeignKey("topics.id"), default=None)
+    params: Mapped[dict | None] = mapped_column(JSON, default=None)
+    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)  # pending|running|done|failed
+    idempotency_key: Mapped[str] = mapped_column(String(120), index=True)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

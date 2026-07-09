@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Hàng đợi{% endblock %}
+{% block content %}
+<h1>Hàng đợi công việc</h1>
+<p class="muted">Mới nhất trước. Bộ lập lịch chạy lần lượt các việc đang chờ, khoảng 20 giây một lần.</p>
+<table>
+  <thead><tr><th>ID</th><th>Việc</th><th>Trạng thái</th><th>Video</th><th>Chủ đề</th><th>Tạo lúc</th><th>Xong lúc</th><th>Lỗi</th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+    <tr>
+      <td>{{ j.id }}</td>
+      <td>{{ j.command }}</td>
+      <td><span class="pill {{ j.status }}">{{ j.status }}</span></td>
+      <td>{% if j.video_id %}<a href="/videos/{{ j.video_id }}">#{{ j.video_id }}</a>{% else %}—{% endif %}</td>
+      <td>{{ j.topic_id or '—' }}</td>
+      <td class="muted small">{{ j.created_at }}</td>
+      <td class="muted small">{{ j.finished_at or '—' }}</td>
+      <td class="bad small">{{ j.error or '' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">Chưa có job.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

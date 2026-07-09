@@ -33,9 +33,15 @@ PYTHONPATH=src .venv/bin/python -m ai_operator.cli init-db
 operator init-db                 # create SQLite schema
 operator status                  # month-to-date budget remaining
 operator costs                   # cost ledger by provider
+operator run-scheduler           # always-on loop: produce/publish/analytics + job queue
+operator run-web                 # local control panel + JSON API on 127.0.0.1:8000
 # later phases add: gen-topics, gen-script, gen-audio, gen-visuals,
 #                   assemble, run-bot, notify-review, authorize, publish
 ```
+
+`run-web` is a browser control panel to view and drive the whole pipeline. It binds loopback
+only with no auth (see `docs/deployment-guide.md` → "Web control panel"); it enqueues heavy
+work into a DB `jobs` table that `run-scheduler` drains — run both together.
 
 ## Architecture & plan
 

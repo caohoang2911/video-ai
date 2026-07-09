@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     YT_CATEGORY_ID: str = "27"  # 27 = Education
     WEEKLY_VIDEO_CAP: int = 3
 
+    # --- web control panel (local only) ---
+    # Bind loopback only: the panel has no auth, so it must never listen on 0.0.0.0.
+    WEB_HOST: str = "127.0.0.1"
+    WEB_PORT: int = 8000
+
     def missing(self, keys: list[str]) -> list[str]:
         """Return the subset of `keys` that are unset/empty (for pre-flight checks)."""
         return [k for k in keys if not getattr(self, k, None)]

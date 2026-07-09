@@ -24,7 +24,7 @@ from ..db.state_machine import VideoState
 from ..logging_setup import get_logger
 from ..publisher import quota_throttle
 from ..publisher.publish import publish
-from . import alerting, analytics_puller, keepalive, pipeline_runner
+from . import alerting, analytics_puller, job_worker, keepalive, pipeline_runner
 
 log = get_logger("ops.scheduler")
 
@@ -120,14 +120,18 @@ def build_scheduler():
     sched.add_job(publish_job, "interval", hours=6, id="publish")    # frequent scan; char/cap gate the rate
     sched.add_job(analytics_job, "interval", days=1, id="analytics")
     sched.add_job(keepalive_job, "interval", days=25, id="keepalive")  # well under the 6-month token expiry
+    # Drain the control-panel job queue frequently; max_instances=1 keeps jobs sequential (one
+    # writer) and coalesce collapses ticks that pile up behind a long-running job.
+    sched.add_job(job_worker.drain_jobs, "interval", seconds=20, id="jobs", max_instances=1, coalesce=True)
     return sched
 
 
 def run_scheduler() -> None:
     """Foreground blocking run: start the scheduler and idle until interrupted."""
+    job_worker.requeue_orphaned_jobs()  # recover any job interrupted by a prior crash/restart
     sched = build_scheduler()
     sched.start()
-    log.info("scheduler started (produce/publish/analytics/keepalive) — Ctrl-C to stop")
+    log.info("scheduler started (produce/publish/analytics/keepalive/jobs) — Ctrl-C to stop")
     try:
         while True:
             time.sleep(3600)

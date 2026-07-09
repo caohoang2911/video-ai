@@ -37,6 +37,11 @@ dependencies = [
     "APScheduler>=3.11,<4",
     # --- topic dedup (phase 01/02) ---
     "sentence-transformers>=3.0", # all-MiniLM-L6-v2, CPU, lazy-loaded
+    # --- web control panel + api (local operator UI) ---
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",    # form posts from the control panel
 ]
 
 [project.optional-dependencies]

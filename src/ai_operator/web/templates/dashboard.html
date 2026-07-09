@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Tổng quan{% endblock %}
+{% block content %}
+<h1>Tổng quan</h1>
+
+{% set v = validation %}
+<section class="card {{ 'ok' if v.decision == 'PASS' else 'warn' }}">
+  <h2>Đánh giá kênh: {{ v.decision }}{% if v.strong_pass %} (đạt tốt){% endif %}</h2>
+  <p>{{ v.rationale }}</p>
+  <p class="muted">xét {{ v.window }} video gần nhất · có số liệu {{ v.filled }} · lượt xem TB {{ v.avg_views }}
+     · giữ chân {{ v.avg_retention_pct }}% · CTR {{ v.avg_ctr_pct }}% · vi phạm {{ v.strikes }}</p>
+</section>
+
+{% set h = health %}
+<section class="grid">
+  <div class="card">
+    <h3>Số video theo trạng thái</h3>
+    <ul class="kv">{% for st, n in h.states.items() %}<li>{{ st }}<span>{{ n }}</span></li>{% endfor %}</ul>
+  </div>
+  <div class="card">
+    <h3>Ngân sách ({{ h.budget.ym }})</h3>
+    <p class="big">${{ h.budget.spent }} <span class="muted">/ ${{ h.budget.monthly_budget }}</span></p>
+    <p class="muted">còn lại ${{ h.budget.remaining }}</p>
+  </div>
+  <div class="card">
+    <h3>Ký tự ElevenLabs đã dùng</h3>
+    <p class="big">{{ h.char_quota.pct_used }}%</p>
+    <p class="muted">{{ h.char_quota.used }} / {{ h.char_quota.quota }}
+      {% if h.char_quota.exhausted %}<b class="bad">HẾT HẠN MỨC</b>{% elif h.char_quota.alert %}<b class="warn">SẮP HẾT</b>{% endif %}</p>
+  </div>
+  <div class="card">
+    <h3>Hạn mức YouTube (hôm nay)</h3>
+    <p class="big">{{ h.yt_quota.remaining }}</p>
+    <p class="muted">đã dùng {{ h.yt_quota.used_today }}</p>
+  </div>
+  <div class="card">
+    <h3>Hiệu quả video</h3>
+    <p class="muted">{{ h.analytics.videos }} video · lượt xem TB {{ h.analytics.avg_views }}
+      · giữ chân {{ h.analytics.avg_retention_pct }}% · CTR {{ h.analytics.avg_ctr }}%</p>
+  </div>
+  <div class="card">
+    <h3>Đăng gần nhất</h3>
+    <p class="muted">{{ h.last_publish or '(chưa có)' }}</p>
+    <p class="muted">dung lượng output/: {{ (h.disk.total_bytes / 1048576) | round(1) }} MiB</p>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Lỗi gần đây ({{ h.recent_errors | length }})</h3>
+  {% if h.recent_errors %}<pre>{% for e in h.recent_errors %}{{ e }}
+{% endfor %}</pre>{% else %}<p class="muted">không có</p>{% endif %}
+</section>
+{% endblock %}

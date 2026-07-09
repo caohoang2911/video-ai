@@ -33,6 +33,7 @@ _PHASE_COMMAND_MODULES = (
     "review.commands",
     "publisher.commands",
     "ops.commands",
+    "web.commands",
 )
 
 

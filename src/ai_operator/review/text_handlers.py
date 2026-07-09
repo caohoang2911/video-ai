@@ -9,11 +9,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ..config import settings
-from ..db.engine import SessionLocal
-from ..db.models import Video
 from ..logging_setup import get_logger
 from .app_state_store import clear, get_json
 from .decision_finalize import finalize_decision
+from .metadata_edit import apply_metadata_edit, parse_edit_text
 
 log = get_logger("review.text_handlers")
 
@@ -41,35 +40,8 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if pending_edit:
         clear(edit_key)
         video_id = pending_edit["video_id"]
-        _apply_metadata_edit(video_id, text)
+        apply_metadata_edit(video_id, parse_edit_text(text))  # shared writer (web reuses it too)
         await update.message.reply_text(f"Metadata updated for video #{video_id}.")
         return
 
     # no pending prompt for this chat -> a stray message, nothing to do
-
-
-def _apply_metadata_edit(video_id: int, text: str) -> None:
-    """Parse `field: value` lines (title/description/tags) and patch the Video row.
-
-    P0 scope is metadata-only — re-rendering script/media from an edit is deferred
-    (re-running the assembler/TTS steps would re-trigger paid API calls).
-    """
-    fields: dict[str, str] = {}
-    for line in text.splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        fields[key.strip().lower()] = value.strip()
-
-    with SessionLocal() as s:
-        video = s.get(Video, video_id)
-        if video is None:
-            log.warning("edit reply for unknown video %s", video_id)
-            return
-        if "title" in fields:
-            video.title = fields["title"]
-        if "description" in fields:
-            video.description = fields["description"]
-        if "tags" in fields:
-            video.tags = [t.strip() for t in fields["tags"].split(",") if t.strip()]
-        s.commit()

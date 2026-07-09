@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Chủ đề{% endblock %}
+{% block content %}
+<h1>Chủ đề</h1>
+
+<section class="card">
+  <h3>Tạo chủ đề mới</h3>
+  <div class="btnrow">
+    <form method="post" action="/topics/gen-topics">
+      <label>Số lượng <input type="number" name="n" value="5" min="1" max="20" style="width:4rem"></label>
+      <button type="submit">Nạp sẵn + để AI gợi ý</button>
+    </form>
+  </div>
+</section>
+
+<table>
+  <thead><tr><th>ID</th><th>Tiêu đề</th><th>Góc nhìn</th><th>Trạng thái</th><th>Sản xuất</th></tr></thead>
+  <tbody>
+  {% for t in topics %}
+    <tr>
+      <td>{{ t.id }}</td>
+      <td>{{ t.title }}</td>
+      <td class="muted small">{{ t.angle or '—' }}</td>
+      <td><span class="pill">{{ t.status }}</span></td>
+      <td>
+        <form method="post" action="/topics/{{ t.id }}/produce">
+          <button type="submit">sản xuất</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">Chưa có chủ đề.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
