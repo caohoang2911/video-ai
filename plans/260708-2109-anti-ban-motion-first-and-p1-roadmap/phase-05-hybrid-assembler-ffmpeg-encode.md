@@ -21,7 +21,11 @@ normalized clips. Sequence 5a first.
 
 ## Stage breakdown
 
-### 5a — ffmpeg encode refactor
+### 5a — ffmpeg encode refactor  ✅ DONE
+- Verified: real 458s render 136s (was ~1320s MoviePy, ~10x), `h264_videotoolbox`, 24fps CFR,
+  ffmpeg-burned SRT captions, pure-ffmpeg intro/outro cards, body-first mux (no intro shift),
+  intermediates cleaned. Tests: `tests/test_ffmpeg_encode.py`. Note: videotoolbox `-b:v 8M`
+  yields a large file for static/slideshow content (fine for a motion-heavy 5b render; tunable).
 - **Dependencies:** []
 - Buildable and independently verifiable NOW, before any b-roll asset exists: drop MoviePy's
   `write_videofile`/`TextClip`/Pillow-pin render path in favor of an ffmpeg-native pipeline, on the

@@ -1,15 +1,16 @@
-"""Orchestrates the assemble step end-to-end: Ken Burns segments -> captions -> ducked
-audio -> branding -> single H.264 export. Composited in one pass so we never re-read a
-clip mid-pipeline (a real source of audio/video drift on longer renders).
+"""Orchestrates the assemble step end-to-end, ffmpeg-native (no MoviePy on the render path):
+Ken Burns segments -> concat body -> burn captions + mux ducked audio (body-first) -> join
+pre-built intro/outro -> single hardware-encoded final.mp4.
+
+Body-first ordering keeps caption/narration t=0 pinned to the first body beat; intro/outro are
+stream-copy-concatenated around the finished body so their length never shifts the timeline.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
-
-from moviepy import AudioFileClip, CompositeVideoClip, VideoFileClip, concatenate_videoclips
-from sqlalchemy import select
 
 from ..checkpoint import is_done, make_idempotency_key
 from ..checkpoint import write as write_checkpoint
@@ -17,22 +18,22 @@ from ..config import OUTPUT_DIR
 from ..db import InvalidTransition, SessionLocal, VideoState, assert_transition
 from ..db.models import Asset, Video
 from ..logging_setup import get_logger
-from .audio_mixer import mix as mix_audio
+from . import branding, ffmpeg_encode, srt_writer
 from .beat_timing import compute_beat_durations
-from .branding import font_path, load_intro, load_outro
-from .caption_whisper import build_text_clips, transcribe
+from .caption_whisper import transcribe
 from .kenburns_ffmpeg import render_segments
+from sqlalchemy import select
 
 log = get_logger("assembler.video_builder")
 
 STEP = "assemble"
-WIDTH, HEIGHT, FPS = 1920, 1080, 30
+WIDTH, HEIGHT, FPS = 1920, 1080, 24
 
 
 def assemble_video(video_id: int) -> dict:
-    """Render `output/<video_id>/final.mp4`, update `videos.state = rendered`, return
-    `{"video_path", "duration_sec"}`. Safe to call again after a crash: a finished run is
-    detected via checkpoint + DB state and short-circuited without re-rendering."""
+    """Render `output/<video_id>/final.mp4`, set `videos.state = rendered`, return
+    `{"video_path", "duration_sec"}`. Idempotent: a finished run (final.mp4 + checkpoint/state)
+    short-circuits without re-rendering."""
     with SessionLocal() as session:
         video = session.get(Video, video_id)
         if video is None:
@@ -42,13 +43,9 @@ def assemble_video(video_id: int) -> dict:
     video_dir = OUTPUT_DIR / str(video_id)
     final_path = video_dir / "final.mp4"
 
-    # A genuinely finished run: final.mp4 present AND (checkpoint says done OR the row already
-    # advanced to rendered). Tolerates a lost checkpoint after a successful render.
     if final_path.exists() and (is_done(video_id, STEP) or state == VideoState.RENDERED.value):
         log.info("video %s: assemble already done -> reusing %s", video_id, final_path)
         return {"video_path": str(final_path), "duration_sec": duration_sec or 0}
-    # Allow an idempotent re-render from VOICED (first render) or RENDERED (e.g. final.mp4 was
-    # deleted to force a re-render, or a crash landed between the state commit and checkpoint).
     if state not in (VideoState.VOICED.value, VideoState.RENDERED.value):
         raise InvalidTransition(
             f"video {video_id} state={state}, expected {VideoState.VOICED.value} or {VideoState.RENDERED.value}"
@@ -61,30 +58,25 @@ def assemble_video(video_id: int) -> dict:
     if not narration_path.exists():
         raise FileNotFoundError(f"missing {narration_path}")
 
-    script = json.loads(script_path.read_text(encoding="utf-8"))
-    shot_list = script["shot_list"]
+    shot_list = json.loads(script_path.read_text(encoding="utf-8"))["shot_list"]
+    narration_dur = ffmpeg_encode.probe_duration(narration_path)
+    durations = compute_beat_durations(shot_list, narration_dur)
 
-    narration = AudioFileClip(str(narration_path))
-    durations = compute_beat_durations(shot_list, narration.duration)
-    segments = render_segments(shot_list, durations, video_dir / "img", video_dir / "segments")
-    seg_clips = [VideoFileClip(str(p)) for p in segments]
-    base_video = concatenate_videoclips(seg_clips, method="chain")
+    segments_dir = video_dir / "segments"
+    segments = render_segments(shot_list, durations, video_dir / "img", segments_dir)
 
-    captions = transcribe(narration_path)
-    text_clips = build_text_clips(captions, font_path())
-    composite = CompositeVideoClip([base_video, *text_clips], size=(WIDTH, HEIGHT))
-    composite = composite.with_audio(mix_audio(narration, _resolve_music_path(video_id, video_dir)))
+    srt_path = srt_writer.write_srt(transcribe(narration_path), video_dir / "captions.srt")
 
-    full = concatenate_videoclips(
-        [load_intro(title or ""), composite, load_outro()], method="compose"
+    base = ffmpeg_encode.concat_copy(segments, video_dir / "base.mp4")
+    body = ffmpeg_encode.burn_and_mux(
+        base, srt_path, narration_path, _resolve_music_path(video_id, video_dir), video_dir / "body.mp4"
     )
+    intro = branding.make_intro(title or "", video_dir / "intro.mp4")
+    outro = branding.make_outro(video_dir / "outro.mp4")
+    ffmpeg_encode.concat_copy([intro, body, outro], final_path)
 
-    final_path.parent.mkdir(parents=True, exist_ok=True)
-    full.write_videofile(
-        str(final_path), fps=FPS, codec="libx264", preset="fast",
-        ffmpeg_params=["-crf", "23", "-pix_fmt", "yuv420p"], threads=8, audio_codec="aac",
-    )
-    rendered_duration = int(round(full.duration))
+    rendered_duration = int(round(ffmpeg_encode.probe_duration(final_path)))
+    _cleanup_intermediates(segments_dir, [base, body, intro, outro])
 
     idem_key = make_idempotency_key(str(video_id), STEP, str(narration_path))
     _persist_rendered_state(video_id, str(final_path), rendered_duration)
@@ -92,17 +84,23 @@ def assemble_video(video_id: int) -> dict:
     return {"video_path": str(final_path), "duration_sec": rendered_duration}
 
 
+def _cleanup_intermediates(segments_dir: Path, files: list[Path]) -> None:
+    """Delete render-time working files once final.mp4 exists -- keep only final.mp4, captions.srt,
+    and the source artifacts (img/, narration.mp3, script.json)."""
+    shutil.rmtree(segments_dir, ignore_errors=True)
+    for f in files:
+        Path(f).unlink(missing_ok=True)
+
+
 def _resolve_music_path(video_id: int, video_dir: Path) -> str | None:
-    """Background music sourcing is still an open decision upstream (royalty-free library
-    vs licensed service) -- most videos will have none in P0. Prefer a DB-tracked asset
-    (auditable license/source), else a manually-dropped conventional file, else silence."""
+    """Prefer a DB-tracked music asset (auditable license), else a manually-dropped music.mp3,
+    else silence -- most P0 videos have no music bed."""
     with SessionLocal() as session:
         asset = session.execute(
             select(Asset).where(Asset.video_id == video_id, Asset.kind == "music")
         ).scalars().first()
         if asset and Path(asset.url_or_path).exists():
             return asset.url_or_path
-
     fallback = video_dir / "music.mp3"
     return str(fallback) if fallback.exists() else None
 
@@ -110,8 +108,6 @@ def _resolve_music_path(video_id: int, video_dir: Path) -> str | None:
 def _persist_rendered_state(video_id: int, video_path: str, duration_sec: int) -> None:
     with SessionLocal() as session:
         video = session.get(Video, video_id)
-        # Idempotent: a re-render (deleted final.mp4, or crash before checkpoint) re-enters
-        # with the row already RENDERED, which has no self-loop — only advance when needed.
         if video.state != VideoState.RENDERED.value:
             assert_transition(video.state, VideoState.RENDERED)
             video.state = VideoState.RENDERED.value

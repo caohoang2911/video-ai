@@ -12,7 +12,9 @@ from ..logging_setup import get_logger
 
 log = get_logger("assembler.kenburns")
 
-FPS = 30
+# ONE project-wide fps. Ken Burns stills, b-roll normalize, branding cards, and every concat
+# boundary all run at 24 so mixed segments never inflate the timeline or desync burned captions.
+FPS = 24
 WIDTH, HEIGHT = 1920, 1080
 MAX_ZOOM = 1.3
 ZOOM_STEP = 0.0015
