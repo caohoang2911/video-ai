@@ -62,7 +62,12 @@ def synthesize_elevenlabs(
     )
     try:
         client = ElevenLabs(api_key=settings.ELEVENLABS_API_KEY)
-        r = client.text_to_speech.with_raw_response.convert(
+        # On elevenlabs>=2.x `with_raw_response.convert()` is a CONTEXT MANAGER: entering it
+        # performs the request and yields an HttpResponse exposing `.data` (Iterator[bytes]) and
+        # `._response.headers`. It must be used with `with` -- calling it and touching attributes
+        # directly hits the _GeneratorContextManager wrapper (no `.data`/`._response`) and every
+        # synth fails, silently dropping the video to the edge-tts fallback.
+        with client.text_to_speech.with_raw_response.convert(
             voice_id=settings.ELEVENLABS_VOICE_ID,
             text=text,
             model_id=_ELEVENLABS_MODEL,
@@ -76,14 +81,12 @@ def synthesize_elevenlabs(
             previous_text=effective_prev_text,
             next_text=next_text,
             previous_request_ids=(prev_request_ids[-3:] or None),
-        )
-        # request-id must be read from the raw response BEFORE consuming r.data (Iterator[bytes]);
-        # r._response is the verified way to reach it on elevenlabs==2.56 (r.headers wraps the same
-        # dict but the raw-response accessor is what the SDK's own docs/tests exercise).
-        request_id = r._response.headers.get("request-id")
-        with open(out_path, "wb") as f:
-            for chunk_bytes in r.data:
-                f.write(chunk_bytes)
+        ) as r:
+            # request-id (for prev_request_ids stitching) must be read before draining `.data`.
+            request_id = r._response.headers.get("request-id")
+            with open(out_path, "wb") as f:
+                for chunk_bytes in r.data:
+                    f.write(chunk_bytes)
     except Exception as exc:
         record_actual(ledger_id, 0.0)
         raise ProviderFailed(f"elevenlabs: {exc}") from exc

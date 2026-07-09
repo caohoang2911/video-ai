@@ -533,3 +533,50 @@ def test_revoice_leaves_render_and_state_untouched_when_elevenlabs_still_unavail
         v = s.get(Video, video_id)
         assert v.state == VideoState.RENDERED.value  # unchanged
         assert v.needs_revoice is True                # still flagged
+
+
+# --------------------------------------------------------------------------------------
+# synthesize_elevenlabs SDK contract (regression: with_raw_response is a context manager)
+# --------------------------------------------------------------------------------------
+
+
+def test_synthesize_elevenlabs_enters_raw_response_context_manager(tmp_path, monkeypatch):
+    """On elevenlabs>=2.x `with_raw_response.convert()` returns a CONTEXT MANAGER; the synth must
+    enter it with `with` to reach `.data`/`._response`. The prior code touched the wrapper
+    directly, so every real synth raised and the video silently fell back to edge-tts. This fakes
+    that SDK shape (unmocked synth path) so a regression to non-`with` access fails loudly."""
+    import types
+
+    import elevenlabs.client as el_client
+
+    class _RawResp:
+        def __init__(self):
+            self.data = iter([b"AUDIO", b"BYTES"])
+            self._response = types.SimpleNamespace(headers={"request-id": "rid-xyz"})
+
+    class _CM:  # only reachable via `with`; direct attribute access has no .data/._response
+        def __enter__(self):
+            return _RawResp()
+
+        def __exit__(self, *a):
+            return False
+
+    class _FakeClient:
+        def __init__(self, api_key=None):
+            self.text_to_speech = types.SimpleNamespace(
+                with_raw_response=types.SimpleNamespace(convert=lambda **kw: _CM())
+            )
+
+    monkeypatch.setattr(el_client, "ElevenLabs", _FakeClient)
+    monkeypatch.setattr(tp.settings, "ELEVENLABS_API_KEY", "k")
+    monkeypatch.setattr(tp.settings, "ELEVENLABS_VOICE_ID", "v")
+    monkeypatch.setattr(tp, "estimate_step", lambda *a, **k: 0.0)
+    monkeypatch.setattr(tp, "check_and_reserve", lambda *a, **k: 1)
+    monkeypatch.setattr(tp, "record_actual", lambda *a, **k: None)
+
+    out = tmp_path / "narration_chunk.mp3"
+    rid = tp.synthesize_elevenlabs(
+        "hello", out, video_id=None, prev_text=None, next_text=None, prev_request_ids=[]
+    )
+    assert out.read_bytes() == b"AUDIOBYTES"  # streamed from r.data inside the context manager
+    assert rid == "rid-xyz"                    # request-id read from r._response.headers
