@@ -249,6 +249,27 @@ def test_acquire_stills_only_skips_video_tier(tmp_path, monkeypatch):
     assert written["motion_beats"] == 0
 
 
+def test_force_generate_skips_stock_and_generates_every_beat(tmp_path, monkeypatch):
+    """gen-all mode must bypass BOTH stock tiers and send every beat to SDXL generation --
+    for period/event topics where stock returns off-content footage."""
+    _patch_checkpoint(monkeypatch)
+    # any stock call in this mode is a bug -> blow up if the fetchers are consulted
+    monkeypatch.setattr(vf, "_acquire_broll_clips",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("stock video consulted")))
+    monkeypatch.setattr(vf, "_fetch_stock",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("stock photo consulted")))
+    gen_beats: list[int] = []
+    monkeypatch.setattr(vf, "_generate_visual",
+                        lambda bid, kw, mood, dia: (gen_beats.append(bid), (tmp_path / f"g{bid}.png", "sdxl"))[1])
+    monkeypatch.setattr(vf, "_flush_generated_batch",
+                        lambda vid, items: [{"kind": "gen", "beat": it.beat_id} for it in items])
+
+    saved = vf.acquire(30, _beats(3), force_generate=True)
+
+    assert gen_beats == [1, 2, 3]                       # every beat generated
+    assert [r["kind"] for r in saved] == ["gen", "gen", "gen"]
+
+
 def test_clips_needed_scales_with_beat_length():
     assert vf._clips_needed(0) == 1          # unknown -> single clip
     assert vf._clips_needed(10) == 1         # short beat -> one clip

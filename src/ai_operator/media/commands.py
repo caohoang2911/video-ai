@@ -57,6 +57,11 @@ def gen_visuals(
         help="fetch motion b-roll as the primary visual (needs the hybrid video assembler); "
              "default is stills-only, which the current assembler can render",
     ),
+    gen_all: bool = typer.Option(
+        False, "--gen-all",
+        help="skip stock entirely and generate every beat with SDXL (period-accurate "
+             "illustration for historical topics stock can't serve); overrides --motion",
+    ),
 ) -> None:
     # Stills-only is the DEFAULT until the hybrid video assembler ships: a b-roll beat has no
     # per-beat still, and the current stills assembler requires one, so a default motion run
@@ -65,7 +70,9 @@ def gen_visuals(
     with SessionLocal() as session:
         video = _load_video(session, video_id)
         script = _load_script(video)
-        assets = visual_fetcher.acquire(video_id, script["shot_list"], stills_only=not motion)
+        assets = visual_fetcher.acquire(
+            video_id, script["shot_list"], stills_only=not motion, force_generate=gen_all
+        )
         _maybe_mark_voiced(video)
         session.commit()
     typer.echo(f"{len(assets)} visual assets acquired")

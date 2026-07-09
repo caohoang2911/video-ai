@@ -228,9 +228,14 @@ def _flush_generated_batch(video_id: int, items: list[_GeneratedItem]) -> list[d
     ]
 
 
-def acquire(video_id: int, shot_list: list[dict], stills_only: bool = False) -> list[dict]:
+def acquire(
+    video_id: int, shot_list: list[dict], stills_only: bool = False, force_generate: bool = False
+) -> list[dict]:
     """Resolve >=1 visual per beat (motion b-roll first, then stills) and persist via
-    asset_store; idempotent. `stills_only` skips the video tier for cheap/offline runs."""
+    asset_store; idempotent. `stills_only` skips the video tier for cheap/offline runs.
+    `force_generate` skips BOTH stock tiers and generates every beat with SDXL -- for
+    period/event topics stock can't serve (a modern city clip for a 1917 harbor), a
+    period-styled illustration tracks the narration better."""
     if checkpoint.is_done(video_id, STEP):
         log.info("video %s: visuals already acquired, skipping", video_id)
         return asset_store.list_assets(video_id)
@@ -250,25 +255,27 @@ def acquire(video_id: int, shot_list: list[dict], stills_only: bool = False) -> 
         # CLIP relevance text for this beat: its keywords + narration span (what the scene is about).
         text = ", ".join(keywords) + (f". {beat.get('narration_span', '')}" if beat.get("narration_span") else "")
 
-        # Tier 1: motion b-roll montage (skipped for map/diagram beats -- footage rarely fits
-        # them -- and for stills-only runs). A long beat pulls several DISTINCT clips so it
-        # isn't one short clip looped repeatedly; no clip lands -> fall through to stills.
-        if not is_diagram and not stills_only:
-            broll = _acquire_broll_clips(video_id, beat_id, keywords, _clips_needed(beat_seconds[i]), text)
-            if broll:
-                saved.extend(broll)
-                motion_beats += 1
-                continue
+        # Stock tiers are skipped entirely in force_generate mode (SDXL every beat).
+        if not force_generate:
+            # Tier 1: motion b-roll montage (skipped for map/diagram beats -- footage rarely
+            # fits them -- and for stills-only runs). A long beat pulls several DISTINCT clips
+            # so it isn't one short clip looped; no clip lands -> fall through to stills.
+            if not is_diagram and not stills_only:
+                broll = _acquire_broll_clips(video_id, beat_id, keywords, _clips_needed(beat_seconds[i]), text)
+                if broll:
+                    saved.extend(broll)
+                    motion_beats += 1
+                    continue
 
-        # Tier 2: stock photo (Ken Burns later) where no footage landed.
-        record = None
-        if not is_diagram:
-            hit = _fetch_stock(keywords, text)
-            if hit is not None:
-                record = asset_store.save_stock(video_id, beat_id, hit[0], hit[1])
-        if record is not None:
-            saved.append(record)
-            continue
+            # Tier 2: stock photo (Ken Burns later) where no footage landed.
+            record = None
+            if not is_diagram:
+                hit = _fetch_stock(keywords, text)
+                if hit is not None:
+                    record = asset_store.save_stock(video_id, beat_id, hit[0], hit[1])
+            if record is not None:
+                saved.append(record)
+                continue
 
         # Tier 3/4: generated stills (SDXL -> fal), graded for style coherence in batches.
         generated = _generate_visual(beat_id, keywords, mood, is_diagram)

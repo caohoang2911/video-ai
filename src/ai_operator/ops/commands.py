@@ -24,13 +24,14 @@ def register(app: typer.Typer) -> None:
         video_id: Optional[int] = typer.Option(None, "--video-id", help="Advance an existing video"),
         topic_id: Optional[int] = typer.Option(None, "--topic-id", help="Produce a new video from this topic"),
         motion: bool = typer.Option(False, "--motion/--stills-only", help="Fetch motion b-roll (needs a stock-video key)"),
+        gen_all: bool = typer.Option(False, "--gen-all", help="Generate every beat with SDXL (skip stock; period-accurate)"),
     ) -> None:
         """Run the per-step pipeline (audio -> visuals -> assemble -> review) for one video."""
         setup_logging()
         if video_id is not None:
-            vid = pipeline_runner.run_video(video_id, motion=motion)
+            vid = pipeline_runner.run_video(video_id, motion=motion, gen_all=gen_all)
         else:
-            vid = pipeline_runner.run_new(topic_id, motion=motion)
+            vid = pipeline_runner.run_new(topic_id, motion=motion, gen_all=gen_all)
         typer.echo(f"pipeline ran -> video {vid}" if vid else "pipeline: nothing to do (no topic)")
 
     @app.command("pull-analytics")

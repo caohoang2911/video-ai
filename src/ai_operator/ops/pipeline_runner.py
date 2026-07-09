@@ -24,7 +24,7 @@ from ..review.review_notifier import notify
 log = get_logger("ops.pipeline_runner")
 
 
-def run_new(topic_id: int | None = None, *, motion: bool = False) -> int | None:
+def run_new(topic_id: int | None = None, *, motion: bool = False, gen_all: bool = False) -> int | None:
     """Pick a topic (given, else oldest backlog), generate its script, then run the pipeline.
     Returns the video id, or None if no topic was available."""
     with SessionLocal() as s:
@@ -47,14 +47,14 @@ def run_new(topic_id: int | None = None, *, motion: bool = False) -> int | None:
     if video is None:
         log.error("run_new: script generated but no video row found for topic %s", topic.id)
         return None
-    return run_video(video.id, motion=motion)
+    return run_video(video.id, motion=motion, gen_all=gen_all)
 
 
-def run_video(video_id: int, *, motion: bool = False) -> int:
+def run_video(video_id: int, *, motion: bool = False, gen_all: bool = False) -> int:
     """Advance one video through audio -> visuals -> assemble -> thumbnails -> review.
     Idempotent per step; stops at the review gate (or at `rendered` without Telegram)."""
     media_commands.gen_audio(video_id=video_id)
-    media_commands.gen_visuals(video_id=video_id, motion=motion)
+    media_commands.gen_visuals(video_id=video_id, motion=motion, gen_all=gen_all)
     assemble_video(video_id)
     generate_thumbnails(video_id)
 
