@@ -184,8 +184,8 @@ def _beats(n: int) -> list[dict]:
 
 def test_acquire_prefers_video_then_falls_back_to_stills(tmp_path, monkeypatch):
     written = _patch_checkpoint(monkeypatch)
-    monkeypatch.setattr(vf, "_fetch_stock_video_list", lambda kw, n: [("vurl", "pexels")])
-    monkeypatch.setattr(vf, "_fetch_stock", lambda kw: ("iurl", "pixabay"))
+    monkeypatch.setattr(vf, "_fetch_stock_video_list", lambda kw, n, text="": [("vurl", "pexels")])
+    monkeypatch.setattr(vf, "_fetch_stock", lambda kw, text="": ("iurl", "pixabay"))
     # beat 1 lands real footage; beat 2's clip fails to download/normalize -> stills fallback
     monkeypatch.setattr(vf.asset_store, "save_video_broll",
                         lambda vid, bid, url, src, index=0: {"kind": "video_broll", "beat": bid} if bid == 1 else None)
@@ -206,7 +206,7 @@ def test_acquire_montages_multiple_clips_for_a_long_beat(tmp_path, monkeypatch):
     _patch_checkpoint(monkeypatch)
     monkeypatch.setattr(vf, "_estimate_beat_seconds", lambda vid, sl: [40.0])  # ~40s beat
     monkeypatch.setattr(vf, "_fetch_stock_video_list",
-                        lambda kw, n: [(f"u{i}", "pexels") for i in range(n)])  # returns exactly n distinct
+                        lambda kw, n, text="": [(f"u{i}", "pexels") for i in range(n)])  # exactly n distinct
     saves: list[tuple] = []
 
     def _save(vid, bid, url, src, index=0):
@@ -227,7 +227,7 @@ def test_acquire_diagram_beat_falls_back_to_stock_when_no_generator(tmp_path, mo
     it must fall back to a stock photo rather than leave the beat with no frame (which crashes assemble)."""
     _patch_checkpoint(monkeypatch)
     monkeypatch.setattr(vf, "_generate_visual", lambda *a, **k: None)          # no SDXL/fal installed
-    monkeypatch.setattr(vf, "_fetch_stock", lambda kw: ("iurl", "pexels"))     # last-resort stock hit
+    monkeypatch.setattr(vf, "_fetch_stock", lambda kw, text="": ("iurl", "pexels"))   # last-resort stock hit
     monkeypatch.setattr(vf.asset_store, "save_stock", lambda vid, bid, url, src: {"kind": "stock", "beat": bid})
 
     saved = vf.acquire(11, [{"beat_id": 1, "keywords": ["route map", "diagram"], "mood": "informative"}])
@@ -237,8 +237,8 @@ def test_acquire_diagram_beat_falls_back_to_stock_when_no_generator(tmp_path, mo
 def test_acquire_stills_only_skips_video_tier(tmp_path, monkeypatch):
     written = _patch_checkpoint(monkeypatch)
     video_calls: list = []
-    monkeypatch.setattr(vf, "_fetch_stock_video_list", lambda kw, n: video_calls.append(kw) or [])
-    monkeypatch.setattr(vf, "_fetch_stock", lambda kw: ("iurl", "pexels"))
+    monkeypatch.setattr(vf, "_fetch_stock_video_list", lambda kw, n, text="": video_calls.append(kw) or [])
+    monkeypatch.setattr(vf, "_fetch_stock", lambda kw, text="": ("iurl", "pexels"))
     monkeypatch.setattr(vf.asset_store, "save_stock",
                         lambda vid, bid, url, src: {"kind": "stock", "beat": bid})
 

@@ -12,17 +12,20 @@ from __future__ import annotations
 
 import asyncio
 import math
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+
+import requests
 
 from .. import checkpoint
 from ..assembler.beat_timing import compute_beat_durations
 from ..assembler.ffmpeg_encode import probe_duration
 from ..config import OUTPUT_DIR
 from ..logging_setup import get_logger
-from . import asset_store, cloud_flux, local_sdxl, stock_clients
+from . import asset_store, clip_reranker, cloud_flux, local_sdxl, stock_clients
 
 log = get_logger("visual_fetcher")
 
@@ -67,11 +70,9 @@ def _run_with_timeout(fn, timeout_sec: float, *args, **kwargs):
         return future.result(timeout=timeout_sec)
 
 
-def _fetch_first(query: str, pexels_fn, pixabay_fn, timeout: float) -> tuple[str, str] | None:
-    """Run the two providers concurrently; return the first (url, source) hit, Pexels first.
-
-    Shared by the photo and video search paths -- only the provider functions + timeout differ.
-    None if both come back empty or the gather times out."""
+def _gather_candidates(query: str, pexels_fn, pixabay_fn, timeout: float) -> list[dict]:
+    """Both providers concurrently -> deduped {"url","thumb","source"} candidates (Pexels first).
+    Shared by the photo + video paths; [] if both come back empty or the gather times out."""
     async def _gather():
         loop = asyncio.get_event_loop()
         pex = loop.run_in_executor(None, pexels_fn, query)
@@ -79,49 +80,76 @@ def _fetch_first(query: str, pexels_fn, pixabay_fn, timeout: float) -> tuple[str
         return await asyncio.wait_for(asyncio.gather(pex, pix), timeout=timeout)
 
     try:
-        pexels_urls, pixabay_urls = asyncio.run(_gather())
+        pex_hits, pix_hits = asyncio.run(_gather())
     except Exception as exc:
         log.warning("stock fetch timed out/failed for %r: %s", query, exc)
-        return None
-    if pexels_urls:
-        return pexels_urls[0], "pexels"
-    if pixabay_urls:
-        return pixabay_urls[0], "pixabay"
-    return None
-
-
-def _fetch_stock(keywords: list[str]) -> tuple[str, str] | None:
-    """First non-empty stock-PHOTO hit from Pexels/Pixabay; None if both empty/timeout."""
-    query = " ".join(keywords[:4])
-    return _fetch_first(query, stock_clients.search_pexels, stock_clients.search_pixabay, STOCK_TIMEOUT_SEC)
-
-
-def _fetch_stock_video_list(keywords: list[str], n: int) -> list[tuple[str, str]]:
-    """Up to `n` DISTINCT stock-VIDEO (url, source) for a beat's montage, Pexels first then
-    Pixabay. Empty list if both come back empty or the search times out."""
-    query = " ".join(keywords[:4])
-
-    async def _gather():
-        loop = asyncio.get_event_loop()
-        pex = loop.run_in_executor(None, stock_clients.search_pexels_video, query)
-        pix = loop.run_in_executor(None, stock_clients.search_pixabay_video, query)
-        return await asyncio.wait_for(asyncio.gather(pex, pix), timeout=STOCK_VIDEO_TIMEOUT_SEC)
-
-    try:
-        pex_urls, pix_urls = asyncio.run(_gather())
-    except Exception as exc:
-        log.warning("stock video fetch timed out/failed for %r: %s", query, exc)
         return []
     seen: set[str] = set()
-    out: list[tuple[str, str]] = []
-    for url, src in [(u, "pexels") for u in pex_urls] + [(u, "pixabay") for u in pix_urls]:
-        if url in seen:
+    out: list[dict] = []
+    for hit, src in [(h, "pexels") for h in pex_hits] + [(h, "pixabay") for h in pix_hits]:
+        if hit["url"] in seen:
             continue
-        seen.add(url)
-        out.append((url, src))
-        if len(out) >= n:
-            break
+        seen.add(hit["url"])
+        out.append({**hit, "source": src})
     return out
+
+
+def _download_thumb(url: str, dest: Path) -> Path | None:
+    if not url:
+        return None
+    try:
+        r = requests.get(url, timeout=STOCK_TIMEOUT_SEC)
+        r.raise_for_status()
+        dest.write_bytes(r.content)
+        return dest
+    except Exception as exc:  # noqa: BLE001 - a missing thumb just drops that candidate from ranking
+        log.debug("thumb download failed %s: %s", url, exc)
+        return None
+
+
+def _rank_candidates(text: str, candidates: list[dict]) -> list[dict]:
+    """Reorder candidates most-relevant-first by CLIP-scoring each preview thumbnail against
+    `text`. No-op (original provider order) when CLIP is unavailable, there's nothing to rank,
+    or thumbnails can't be fetched -- so relevance ranking only ever helps, never blocks."""
+    if len(candidates) <= 1 or not text or not clip_reranker.available():
+        return candidates
+    with tempfile.TemporaryDirectory() as td:
+        thumbs, ranked_idx = [], []
+        for i, c in enumerate(candidates):
+            p = _download_thumb(c.get("thumb", ""), Path(td) / f"t{i}.jpg")
+            if p is not None:
+                thumbs.append(p)
+                ranked_idx.append(i)
+        if len(thumbs) <= 1:
+            return candidates
+        order = clip_reranker.rank(text, thumbs)  # indices into thumbs/ranked_idx
+        ranked = [candidates[ranked_idx[o]] for o in order]
+    # candidates whose thumbnail failed to download stay usable, appended after the ranked ones
+    ranked += [c for i, c in enumerate(candidates) if i not in ranked_idx]
+    return ranked
+
+
+def _fetch_stock(keywords: list[str], text: str = "") -> tuple[str, str] | None:
+    """Most content-relevant stock-PHOTO (url, source); None if both providers empty/timeout."""
+    cands = _gather_candidates(
+        " ".join(keywords[:4]), stock_clients.search_pexels, stock_clients.search_pixabay, STOCK_TIMEOUT_SEC
+    )
+    if not cands:
+        return None
+    best = _rank_candidates(text, cands)[0]
+    return best["url"], best["source"]
+
+
+def _fetch_stock_video_list(keywords: list[str], n: int, text: str = "") -> list[tuple[str, str]]:
+    """The `n` most content-relevant DISTINCT stock-VIDEO (url, source) for a beat's montage.
+    Empty list if both providers come back empty or the search times out."""
+    cands = _gather_candidates(
+        " ".join(keywords[:4]),
+        stock_clients.search_pexels_video, stock_clients.search_pixabay_video, STOCK_VIDEO_TIMEOUT_SEC,
+    )
+    if not cands:
+        return []
+    return [(c["url"], c["source"]) for c in _rank_candidates(text, cands)[:n]]
 
 
 def _estimate_beat_seconds(video_id: int, shot_list: list[dict]) -> list[float]:
@@ -144,11 +172,13 @@ def _clips_needed(beat_seconds: float) -> int:
     return max(1, min(MAX_CLIPS_PER_BEAT, math.ceil(beat_seconds / TARGET_CLIP_SEC)))
 
 
-def _acquire_broll_clips(video_id: int, beat_id: int, keywords: list[str], n_clips: int) -> list[dict]:
-    """Download + persist up to `n_clips` DISTINCT clips for a beat (md5 dedup drops repeats,
-    a bad download/normalize is skipped). Returns the saved records (may be fewer, or empty)."""
+def _acquire_broll_clips(
+    video_id: int, beat_id: int, keywords: list[str], n_clips: int, text: str = ""
+) -> list[dict]:
+    """Download + persist up to `n_clips` DISTINCT, content-ranked clips for a beat (md5 dedup
+    drops repeats, a bad download/normalize is skipped). Returns saved records (may be fewer)."""
     recs: list[dict] = []
-    for url, source in _fetch_stock_video_list(keywords, n_clips):
+    for url, source in _fetch_stock_video_list(keywords, n_clips, text):
         rec = asset_store.save_video_broll(video_id, beat_id, url, source, index=len(recs))
         if rec is not None:
             recs.append(rec)
@@ -217,12 +247,14 @@ def acquire(video_id: int, shot_list: list[dict], stills_only: bool = False) -> 
         keywords = beat.get("keywords", [])[:4]
         mood = beat.get("mood", "")
         is_diagram = _is_diagram_beat(beat)
+        # CLIP relevance text for this beat: its keywords + narration span (what the scene is about).
+        text = ", ".join(keywords) + (f". {beat.get('narration_span', '')}" if beat.get("narration_span") else "")
 
         # Tier 1: motion b-roll montage (skipped for map/diagram beats -- footage rarely fits
         # them -- and for stills-only runs). A long beat pulls several DISTINCT clips so it
         # isn't one short clip looped repeatedly; no clip lands -> fall through to stills.
         if not is_diagram and not stills_only:
-            broll = _acquire_broll_clips(video_id, beat_id, keywords, _clips_needed(beat_seconds[i]))
+            broll = _acquire_broll_clips(video_id, beat_id, keywords, _clips_needed(beat_seconds[i]), text)
             if broll:
                 saved.extend(broll)
                 motion_beats += 1
@@ -231,7 +263,7 @@ def acquire(video_id: int, shot_list: list[dict], stills_only: bool = False) -> 
         # Tier 2: stock photo (Ken Burns later) where no footage landed.
         record = None
         if not is_diagram:
-            hit = _fetch_stock(keywords)
+            hit = _fetch_stock(keywords, text)
             if hit is not None:
                 record = asset_store.save_stock(video_id, beat_id, hit[0], hit[1])
         if record is not None:
@@ -244,7 +276,7 @@ def acquire(video_id: int, shot_list: list[dict], stills_only: bool = False) -> 
             # Last resort for ANY beat that reached generation and failed (generator missing,
             # timed out, or a transient stock miss earlier): the assembler needs one frame per
             # beat or it crashes, so try a stock photo rather than leaving the beat blank.
-            if (hit := _fetch_stock(keywords)) is not None:
+            if (hit := _fetch_stock(keywords, text)) is not None:
                 record = asset_store.save_stock(video_id, beat_id, hit[0], hit[1])
                 if record is not None:
                     saved.append(record)

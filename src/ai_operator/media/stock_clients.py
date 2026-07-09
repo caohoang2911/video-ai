@@ -26,6 +26,12 @@ PIXABAY_PER_SECOND = 1.5
 # Motion b-roll: prefer the smallest file that still clears 1080p -- it costs the least
 # bandwidth and the ffmpeg normalize pass rescales everything to 1920x1080 anyway.
 VIDEO_MIN_HEIGHT = 1080
+# A wider candidate pool gives the CLIP re-ranker a real choice (it scores each hit's preview
+# thumbnail against the beat's content and picks the most relevant, not just the first hit).
+CANDIDATE_POOL = 10
+
+# Search functions return a list of {"url", "thumb"} candidates: `url` is the full-res
+# photo/video file to download, `thumb` a small preview used only for relevance ranking.
 
 
 class _CachedLimiterSession(CacheMixin, LimiterMixin, Session):
@@ -60,8 +66,8 @@ def _pixabay_client() -> _CachedLimiterSession:
     return _pixabay_session
 
 
-def search_pexels(keyword: str, per_page: int = 5) -> list[str]:
-    """Landscape photo URLs (>=1920w) for `keyword`; [] if unconfigured or the call fails."""
+def search_pexels(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
+    """Landscape photo candidates (>=1920w) for `keyword`; [] if unconfigured or the call fails."""
     if not settings.PEXELS_API_KEY:
         return []
     try:
@@ -76,14 +82,17 @@ def search_pexels(keyword: str, per_page: int = 5) -> list[str]:
         if remaining is not None:
             log.debug("pexels quota remaining=%s", remaining)
         photos = r.json().get("photos", [])
-        return [p["src"]["large2x"] for p in photos if p.get("src", {}).get("large2x")]
+        return [
+            {"url": src["large2x"], "thumb": src.get("medium") or src["large2x"]}
+            for p in photos if (src := p.get("src", {})).get("large2x")
+        ]
     except Exception as exc:
         log.warning("pexels search failed for %r: %s", keyword, exc)
         return []
 
 
-def search_pixabay(keyword: str, per_page: int = 5) -> list[str]:
-    """Landscape photo URLs (>=1920w) for `keyword`; [] if unconfigured or the call fails."""
+def search_pixabay(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
+    """Landscape photo candidates (>=1920w) for `keyword`; [] if unconfigured or the call fails."""
     if not settings.PIXABAY_API_KEY:
         return []
     try:
@@ -101,7 +110,10 @@ def search_pixabay(keyword: str, per_page: int = 5) -> list[str]:
         )
         r.raise_for_status()
         hits = r.json().get("hits", [])
-        return [h["largeImageURL"] for h in hits if h.get("largeImageURL")]
+        return [
+            {"url": h["largeImageURL"], "thumb": h.get("previewURL") or h["largeImageURL"]}
+            for h in hits if h.get("largeImageURL")
+        ]
     except Exception as exc:
         log.warning("pixabay search failed for %r: %s", keyword, exc)
         return []
@@ -123,8 +135,8 @@ def _best_pexels_file(video: dict) -> str | None:
     return max(files, key=lambda f: f["width"])["link"]
 
 
-def _best_pixabay_file(hit: dict) -> str | None:
-    """Best landscape video tier url for one Pixabay video hit -- smallest tier >=1080p, else
+def _best_pixabay_tier(hit: dict) -> dict | None:
+    """Best landscape video tier dict for one Pixabay video hit -- smallest tier >=1080p, else
     the tallest. Portrait tiers are dropped (pillarboxing them reads as low-quality/AI-slop)."""
     tiers = [
         t for t in hit.get("videos", {}).values()
@@ -134,13 +146,17 @@ def _best_pixabay_file(hit: dict) -> str | None:
     if not tiers:
         return None
     fhd = [t for t in tiers if t["height"] >= VIDEO_MIN_HEIGHT]
-    if fhd:
-        return min(fhd, key=lambda t: t["height"])["url"]
-    return max(tiers, key=lambda t: t["height"])["url"]
+    return min(fhd, key=lambda t: t["height"]) if fhd else max(tiers, key=lambda t: t["height"])
 
 
-def search_pexels_video(keyword: str, per_page: int = 5) -> list[str]:
-    """Landscape stock-VIDEO file URLs (>=1080p mp4 preferred) for `keyword`; [] if
+def _best_pixabay_file(hit: dict) -> str | None:
+    """Best landscape video tier URL for one Pixabay video hit (see _best_pixabay_tier)."""
+    tier = _best_pixabay_tier(hit)
+    return tier["url"] if tier else None
+
+
+def search_pexels_video(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
+    """Landscape stock-VIDEO candidates (>=1080p mp4 preferred) for `keyword`; [] if
     unconfigured or the call fails. Clips are normalized to 1920x1080@24fps downstream."""
     if not settings.PEXELS_API_KEY:
         return []
@@ -152,14 +168,17 @@ def search_pexels_video(keyword: str, per_page: int = 5) -> list[str]:
             timeout=8,
         )
         r.raise_for_status()
-        return [url for v in r.json().get("videos", []) if (url := _best_pexels_file(v))]
+        return [
+            {"url": url, "thumb": v.get("image", "")}
+            for v in r.json().get("videos", []) if (url := _best_pexels_file(v))
+        ]
     except Exception as exc:
         log.warning("pexels video search failed for %r: %s", keyword, exc)
         return []
 
 
-def search_pixabay_video(keyword: str, per_page: int = 5) -> list[str]:
-    """Stock-VIDEO file URLs (>=1080p tier preferred) for `keyword`; [] if unconfigured or the
+def search_pixabay_video(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
+    """Stock-VIDEO candidates (>=1080p tier preferred) for `keyword`; [] if unconfigured or the
     call fails. Pixabay video is CC0; clips are normalized to 1920x1080@24fps downstream."""
     if not settings.PIXABAY_API_KEY:
         return []
@@ -170,7 +189,12 @@ def search_pixabay_video(keyword: str, per_page: int = 5) -> list[str]:
             timeout=8,
         )
         r.raise_for_status()
-        return [url for h in r.json().get("hits", []) if (url := _best_pixabay_file(h))]
+        out = []
+        for h in r.json().get("hits", []):
+            tier = _best_pixabay_tier(h)
+            if tier:
+                out.append({"url": tier["url"], "thumb": tier.get("thumbnail", "")})
+        return out
     except Exception as exc:
         log.warning("pixabay video search failed for %r: %s", keyword, exc)
         return []
