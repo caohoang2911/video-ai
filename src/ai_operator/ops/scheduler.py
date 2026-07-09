@@ -73,7 +73,8 @@ def produce_job() -> None:
         log.warning("produce SKIPPED + ALERT: %s", reason)
         return
     try:
-        log.info("produce: produced video %s", pipeline_runner.run_new())
+        vid = pipeline_runner.run_new()
+        log.info("produce: produced video %s", vid) if vid else log.info("produce: no topic available")
     except Exception as exc:  # noqa: BLE001 - a scheduler job must never kill the loop
         log.error("produce job failed: %s", exc)
 

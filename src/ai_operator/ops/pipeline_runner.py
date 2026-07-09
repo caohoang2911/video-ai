@@ -16,6 +16,7 @@ from ..config import settings
 from ..content import script_generator, topic_backlog
 from ..db.engine import SessionLocal
 from ..db.models import Topic, Video
+from ..db.state_machine import VideoState, can_transition
 from ..logging_setup import get_logger
 from ..media import commands as media_commands
 from ..review.review_notifier import notify
@@ -32,7 +33,15 @@ def run_new(topic_id: int | None = None, *, motion: bool = False) -> int | None:
         log.warning("run_new: no topic available to produce")
         return None
 
-    script_generator.generate(topic)  # creates the Video row + script.json (state=scripted)
+    try:
+        script_generator.generate(topic)  # creates the Video row + script.json (state=scripted)
+    except Exception as exc:  # noqa: BLE001
+        # A produce loop must never re-pick a topic that keeps failing (research/payoff reject,
+        # or a transient outage). Mark it used so `pick_next` advances instead of jamming the
+        # whole backlog on the same oldest topic forever and re-spending research budget.
+        log.warning("run_new: topic %s failed to generate (%s) -> marking used to unjam the queue", topic.id, exc)
+        topic_backlog.mark_used(topic.id)
+        return None
     with SessionLocal() as s:
         video = s.scalar(select(Video).where(Video.topic_id == topic.id).order_by(Video.id.desc()))
     if video is None:
@@ -49,9 +58,18 @@ def run_video(video_id: int, *, motion: bool = False) -> int:
     assemble_video(video_id)
     generate_thumbnails(video_id)
 
-    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID:
+    if not (settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID):
+        log.info("video %s rendered; Telegram unconfigured -> stopping before the review gate", video_id)
+        return video_id
+
+    # Only notify from a state that can still enter review -- re-running the pipeline on a video
+    # already at/past the gate must be a no-op, not an InvalidTransition crash or a duplicate
+    # preview re-sent to the review chat (mirrors the _maybe_mark_voiced guard).
+    with SessionLocal() as s:
+        state = (s.get(Video, video_id)).state
+    if can_transition(state, VideoState.PENDING_REVIEW):
         notify(video_id)  # -> pending_review (human gate)
         log.info("video %s sent to review gate", video_id)
     else:
-        log.info("video %s rendered; Telegram unconfigured -> stopping before the review gate", video_id)
+        log.info("video %s already at/past the review gate (state=%s) -> not re-notifying", video_id, state)
     return video_id

@@ -7,7 +7,7 @@ already granted at authorize time; unconfigured is a safe no-op.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 
@@ -64,7 +64,7 @@ def pull_all(as_of: date | None = None) -> int:
     if settings.missing(["YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN"]):
         log.info("analytics: YouTube not fully configured -> skipping")
         return 0
-    as_of = as_of or date.today()
+    as_of = as_of or datetime.now(timezone.utc).date()  # UTC to match the scheduler's clock
 
     with SessionLocal() as s:
         yt_ids = [
@@ -78,11 +78,10 @@ def pull_all(as_of: date | None = None) -> int:
     for yt_id in yt_ids:
         try:
             metrics = _query_video(service, yt_id, as_of)
-        except Exception as exc:  # noqa: BLE001 - one video's query must not abort the rest
-            log.warning("analytics query failed for %s: %s", yt_id, exc)
-            continue
-        if metrics is None:
-            continue
-        _upsert(yt_id, as_of, metrics)
-        written += 1
+            if metrics is None:
+                continue  # no data yet for this (fresh) upload
+            _upsert(yt_id, as_of, metrics)  # inside the try -> one video's write failure can't abort the rest
+            written += 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning("analytics update failed for %s: %s", yt_id, exc)
     return written

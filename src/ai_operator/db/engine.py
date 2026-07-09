@@ -39,6 +39,9 @@ def _make_engine():
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA foreign_keys=ON")
+            # Background scheduler jobs run on overlapping threads; WAL allows one writer, so a
+            # second concurrent writer must WAIT (up to 5s) rather than fail fast on SQLITE_BUSY.
+            cur.execute("PRAGMA busy_timeout=5000")
             cur.close()
 
     return eng
