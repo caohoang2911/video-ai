@@ -18,10 +18,9 @@ from ..config import OUTPUT_DIR
 from ..db import InvalidTransition, SessionLocal, VideoState, assert_transition
 from ..db.models import Asset, Video
 from ..logging_setup import get_logger
-from . import branding, ffmpeg_encode, srt_writer
+from . import branding, ffmpeg_encode, segment_builder, srt_writer
 from .beat_timing import compute_beat_durations
 from .caption_whisper import transcribe
-from .kenburns_ffmpeg import render_segments
 from sqlalchemy import select
 
 log = get_logger("assembler.video_builder")
@@ -68,7 +67,9 @@ def assemble_video(video_id: int) -> dict:
     outro = branding.make_outro(video_dir / "outro.mp4")
 
     segments_dir = video_dir / "segments"
-    segments = render_segments(shot_list, durations, video_dir / "img", segments_dir)
+    segments = segment_builder.build_segments(
+        shot_list, durations, video_id, video_dir / "img", segments_dir
+    )
 
     srt_path = srt_writer.write_srt(transcribe(narration_path), video_dir / "captions.srt")
 

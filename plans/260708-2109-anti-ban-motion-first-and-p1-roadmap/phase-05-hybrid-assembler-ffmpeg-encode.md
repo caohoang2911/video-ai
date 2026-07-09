@@ -34,7 +34,12 @@ normalized clips. Sequence 5a first.
   ffmpeg-native intro/outro cards, `kenburns_ffmpeg.py` fps lock (30 → 24), body-first mux ordering,
   `output/<id>/` cleanup after a successful encode.
 
-### 5b — motion b-roll segments + hybrid concat
+### 5b — motion b-roll segments + hybrid concat  ✅ DONE
+- `segment_builder.build_segments`: per beat, a `video_broll` Asset (selected by DB row, not a
+  glob, so orphans are ignored) → clip fit to beat duration (`-stream_loop -1` + `-t`, silent,
+  24fps); else Ken Burns still. Feeds unchanged into 5a's concat/burn/mux/encode. Tests:
+  `tests/test_segment_builder.py`. Retention note: b-roll source clips in `broll/` are kept
+  (re-render idempotency), the full tree prunes at `published` (phase 07), not per-render.
 - **Dependencies:** [4]
 - Scope: `segment_builder.py` mixes phase 4's normalized video b-roll clips with Ken Burns stills per
   beat (trim/loop b-roll to beat duration OR fall back to zoompan); feeds into 5a's concat/encode path.
