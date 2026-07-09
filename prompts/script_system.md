@@ -69,6 +69,18 @@ is the full video title; the `thumbnail_text` is a punchy line of **5 words or f
 completes or sharpens the title on the thumbnail (not a reworded copy of it). The three
 pairs must be genuinely different takes so they can be A/B tested.
 
+## SEO: tags & hashtags
+
+`tags`: **10-15** YouTube search tags in English, layered for discovery —
+- 2-3 **broad** (e.g. "maritime history", "documentary", "history"),
+- 3-4 **specific** to this video (ship name, place, event, year),
+- 3-5 **long-tail** phrases a viewer would actually search ("worst maritime disaster",
+  "forgotten shipwreck", "what really happened to ...").
+
+`hashtags`: **3-5** English hashtags, **no spaces and no leading `#`** (e.g. "Shipwreck",
+"MaritimeHistory", "Documentary"). YouTube shows the **first 3 above the title**, so order
+them most-important first: one topic-specific, then broad niche ones.
+
 ## Output format
 
 Respond with **ONLY** minified JSON, no markdown fences, no commentary, matching
@@ -91,7 +103,8 @@ exactly this shape:
     {"title": "string — full video title", "thumbnail_text": "string — <=5 words for the thumbnail"}
   ],
   "description": "string — YouTube description, 2-4 sentences",
-  "tags": ["string", "..."]
+  "tags": ["string", "... 10-15 SEO tags ..."],
+  "hashtags": ["Shipwreck", "MaritimeHistory", "... 3-5, no spaces, no # ..."]
 }
 ```
 

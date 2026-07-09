@@ -24,8 +24,30 @@ def load_script(script_path: str | Path) -> dict:
     return json.loads(Path(script_path).read_text(encoding="utf-8"))
 
 
+def normalize_hashtags(raw: list[str], limit: int = 5) -> list[str]:
+    """`['Ship Wreck', '#MaritimeHistory']` -> `['#ShipWreck', '#MaritimeHistory']`.
+
+    YouTube hashtags cannot contain spaces and the first 3 render above the title, so strip
+    spaces/punctuation, force a single leading '#', drop blanks/dupes, and cap the count."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for h in raw:
+        token = "".join(ch for ch in str(h) if ch.isalnum())  # drop '#', spaces, punctuation
+        if not token:
+            continue
+        tag = f"#{token}"
+        key = tag.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(tag)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def build_description(script: dict, *, music_credit: str = DEFAULT_MUSIC_CREDIT) -> str:
-    """Compose the public description: base copy + sources + music credit + AI disclosure."""
+    """Compose the public description: base copy + sources + music credit + AI disclosure +
+    hashtags (last line; YouTube surfaces the first 3 above the title for discovery)."""
     base = (script.get("description") or "").strip()
     sources = script.get("sources") or []
     parts = [base] if base else []
@@ -33,6 +55,9 @@ def build_description(script: dict, *, music_credit: str = DEFAULT_MUSIC_CREDIT)
         parts.append("Sources:\n" + "\n".join(f"- {s}" for s in sources))
     parts.append(music_credit)
     parts.append(AI_DISCLOSURE)
+    hashtags = normalize_hashtags(script.get("hashtags") or [])
+    if hashtags:
+        parts.append(" ".join(hashtags))
     return "\n\n".join(p for p in parts if p)[:MAX_DESCRIPTION_LEN]
 
 

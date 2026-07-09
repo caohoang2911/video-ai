@@ -83,7 +83,12 @@ class ScriptOutput(BaseModel):
     shot_list: list[ShotBeat] = Field(min_length=10)
     title_options: list[TitleOption] = Field(min_length=3, max_length=3)
     description: str
+    # SEO tags: broad + specific + long-tail. Older scripts may carry fewer, so only the
+    # lower bound is enforced; the prompt asks for ~10-15.
     tags: list[str] = Field(min_length=1)
+    # YouTube hashtags (no spaces, no leading '#'); the first 3 render above the title. The
+    # publisher appends them to the description. Defaulted so pre-hashtag scripts still load.
+    hashtags: list[str] = Field(default_factory=list, max_length=8)
     sources: list[str] = Field(min_length=2)
     citations: list[Citation] = Field(min_length=3)
     research_depth: ResearchDepth

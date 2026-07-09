@@ -13,20 +13,21 @@ import json
 import subprocess
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image
+from sqlalchemy import select
 
 from ..config import OUTPUT_DIR
 from ..db import SessionLocal
-from ..db.models import Video
+from ..db.models import Asset, Video
 from ..logging_setup import get_logger
-from .branding import font_path
+from . import thumbnail_style
 
 log = get_logger("assembler.thumbnail")
 
 WIDTH, HEIGHT = 1280, 720
 N_VARIANTS = 3
-SCENE_THRESHOLD = 0.4
 VARIANT_LETTERS = "abc"
+_SCALE_FILL = f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT}"
 
 
 def generate(video_id: int) -> list[str]:
@@ -40,14 +41,13 @@ def generate(video_id: int) -> list[str]:
 
     video_dir = OUTPUT_DIR / str(video_id)
     overlays = _overlay_texts(video_dir / "script.json")
-    duration = _probe_duration(video_path)
-    timestamps = _scene_cut_timestamps(video_path, duration)
+    sources = _pick_spread(_caption_free_sources(video_id), N_VARIANTS) or [video_path]
 
     paths = []
     for i in range(N_VARIANTS):
         frame_path = video_dir / f"_thumb_frame_{i}.jpg"
         variant_path = video_dir / f"thumb_{VARIANT_LETTERS[i]}.jpg"
-        _extract_frame(video_path, timestamps[i], frame_path)
+        _extract_frame(sources[i % len(sources)], frame_path)
         _overlay_text(frame_path, overlays[i] if i < len(overlays) else "", variant_path)
         frame_path.unlink(missing_ok=True)
         paths.append(str(variant_path))
@@ -68,66 +68,41 @@ def _overlay_texts(script_path: Path) -> list[str]:
     return [o.get("thumbnail_text", "").upper() for o in script.get("title_options", [])]
 
 
-def _probe_duration(video_path: Path) -> float:
-    out = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", str(video_path)],
-        capture_output=True, text=True, check=True,
-    )
-    return float(out.stdout.strip())
+def _caption_free_sources(video_id: int) -> list[Path]:
+    """Raw per-beat visuals (b-roll clips + stills) as frame sources. Unlike the final render
+    these carry NO burned narration captions, so nothing shows through the overlay text.
+    Ordered by filename (== beat order) so `_pick_spread` samples across the video."""
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(Asset).where(
+                Asset.video_id == video_id, Asset.kind.in_(("video_broll", "gen", "stock"))
+            )
+        ).scalars().all()
+    paths = sorted((Path(r.url_or_path) for r in rows), key=lambda p: p.name)
+    return [p for p in paths if p.exists()]
 
 
-def _scene_cut_timestamps(video_path: Path, duration: float) -> list[float]:
-    """Prefer visually distinct scene-cut frames; a static/slow source that never trips
-    the scene threshold falls back to even thirds of the runtime."""
-    cmd = [
-        "ffmpeg", "-i", str(video_path),
-        "-vf", f"select='gt(scene,{SCENE_THRESHOLD})',showinfo",
-        "-vsync", "vfr", "-f", "null", "-",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    times = []
-    for line in result.stderr.splitlines():
-        if "pts_time:" in line:
-            try:
-                times.append(float(line.split("pts_time:")[1].split()[0]))
-            except (IndexError, ValueError):
-                continue
-    if len(times) >= N_VARIANTS:
-        step = len(times) / N_VARIANTS
-        return [times[int(i * step)] for i in range(N_VARIANTS)]
-    return [duration * f for f in (0.25, 0.5, 0.75)]
+def _pick_spread(items: list, n: int) -> list:
+    """`n` items spread evenly across `items` (variety early/mid/late); fewer if list is short."""
+    if len(items) <= n:
+        return list(items)
+    step = len(items) / n
+    return [items[int(i * step)] for i in range(n)]
 
 
-def _extract_frame(video_path: Path, timestamp: float, out_path: Path) -> None:
-    cmd = [
-        "ffmpeg", "-y", "-ss", f"{timestamp:.3f}", "-i", str(video_path),
-        "-frames:v", "1", "-vf", f"scale={WIDTH}:{HEIGHT}", str(out_path),
-    ]
+def _extract_frame(src: Path, out_path: Path) -> None:
+    """One WIDTHxHEIGHT frame from `src`: a mid-ish frame for a b-roll clip, the scaled image
+    for a still. Aspect is filled-and-cropped (no distortion)."""
+    seek = ["-ss", "1"] if src.suffix.lower() == ".mp4" else []  # 1s in; every clip is longer
+    cmd = ["ffmpeg", "-y", *seek, "-i", str(src), "-frames:v", "1", "-vf", _SCALE_FILL, str(out_path)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg frame extract failed at {timestamp}s: {result.stderr[-500:]}")
+        raise RuntimeError(f"ffmpeg frame extract failed for {src.name}: {result.stderr[-500:]}")
 
 
 def _overlay_text(frame_path: Path, text: str, out_path: Path) -> None:
-    img = Image.open(frame_path).convert("RGB")
-    img = ImageEnhance.Contrast(img).enhance(1.15)
-    img = ImageEnhance.Color(img).enhance(1.1)
-    if text:
-        _draw_stroked_text(ImageDraw.Draw(img), text, _load_font())
+    """Bold-documentary treatment: cinematic grade + vignette + dark band, then the big
+    yellow stroked overlay line (see thumbnail_style)."""
+    img = thumbnail_style.stylize(Image.open(frame_path))
+    thumbnail_style.draw_title(img, text)
     img.save(out_path, "JPEG", quality=92)
-
-
-def _load_font() -> ImageFont.FreeTypeFont:
-    path = font_path()
-    if path:
-        return ImageFont.truetype(path, 84)
-    return ImageFont.load_default(size=84)
-
-
-def _draw_stroked_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> None:
-    x, y = 40, HEIGHT - 160
-    for dx in (-3, 0, 3):
-        for dy in (-3, 0, 3):
-            if dx or dy:
-                draw.text((x + dx, y + dy), text, font=font, fill="black")
-    draw.text((x, y), text, font=font, fill="white")
