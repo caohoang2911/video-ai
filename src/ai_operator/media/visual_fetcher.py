@@ -26,7 +26,9 @@ STEP = "visual_fetch"
 _MAP_DIAGRAM_HINTS = ("map", "diagram", "chart", "route", "schematic", "illustration", "reenact", "blueprint")
 STOCK_TIMEOUT_SEC = 5
 STOCK_VIDEO_TIMEOUT_SEC = 8   # video search returns more metadata than photo search
-SDXL_TIMEOUT_SEC = 45
+# Local SDXL runs fp32 on Apple-Silicon MPS (fp16 NaNs to black frames), ~90-120s/image; the
+# bound must clear that or every generation is abandoned mid-render and the beat is left blank.
+SDXL_TIMEOUT_SEC = 240
 FAL_TIMEOUT_SEC = 30
 COHERENCE_BATCH_SIZE = 10
 COHERENCE_MIN_RATIO = 0.8
@@ -179,10 +181,10 @@ def acquire(video_id: int, shot_list: list[dict], stills_only: bool = False) -> 
         # Tier 3/4: generated stills (SDXL -> fal), graded for style coherence in batches.
         generated = _generate_visual(beat_id, keywords, mood, is_diagram)
         if generated is None:
-            # Last resort: a diagram/illustration beat skipped the stock tiers above, so with no
-            # image generator installed it would otherwise get NO frame at all -- and the assembler
-            # needs one per beat. Fall back to a stock photo rather than leaving the beat blank.
-            if is_diagram and (hit := _fetch_stock(keywords)) is not None:
+            # Last resort for ANY beat that reached generation and failed (generator missing,
+            # timed out, or a transient stock miss earlier): the assembler needs one frame per
+            # beat or it crashes, so try a stock photo rather than leaving the beat blank.
+            if (hit := _fetch_stock(keywords)) is not None:
                 record = asset_store.save_stock(video_id, beat_id, hit[0], hit[1])
                 if record is not None:
                     saved.append(record)
