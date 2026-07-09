@@ -297,7 +297,10 @@ def acquire(
                 if record is not None:
                     saved.append(record)
                     continue
-            log.error("beat %s: no visual acquired (video %s)", beat_id, video_id)
+            # Every tier failed for this beat -> synthesize a neutral still so it is NEVER left
+            # blank (a blank beat has no frame and crashes the assembler).
+            log.warning("beat %s: all visual tiers failed -> placeholder still (video %s)", beat_id, video_id)
+            saved.append(asset_store.save_placeholder(video_id, beat_id))
             continue
         path, source = generated
         pending.append(_GeneratedItem(beat_id, keywords, mood, is_diagram, source, path))

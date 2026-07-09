@@ -270,6 +270,22 @@ def test_force_generate_skips_stock_and_generates_every_beat(tmp_path, monkeypat
     assert [r["kind"] for r in saved] == ["gen", "gen", "gen"]
 
 
+def test_acquire_uses_placeholder_when_all_tiers_fail(tmp_path, monkeypatch):
+    """A beat where motion + stock + generation ALL fail must get a synthesized placeholder
+    still, never be left blank (a blank beat crashes the assembler)."""
+    _patch_checkpoint(monkeypatch)
+    monkeypatch.setattr(vf, "_acquire_broll_clips", lambda *a, **k: [])   # no motion
+    monkeypatch.setattr(vf, "_fetch_stock", lambda *a, **k: None)         # no stock photo
+    monkeypatch.setattr(vf, "_generate_visual", lambda *a, **k: None)     # no SDXL/fal
+    held: list[int] = []
+    monkeypatch.setattr(vf.asset_store, "save_placeholder",
+                        lambda vid, bid: (held.append(bid), {"kind": "gen", "beat": bid})[1])
+
+    saved = vf.acquire(40, _beats(2))
+    assert held == [1, 2]                                  # every beat backstopped
+    assert [r["kind"] for r in saved] == ["gen", "gen"]
+
+
 def test_disable_sdxl_env_skips_generation(monkeypatch):
     """AI_OPERATOR_DISABLE_SDXL forces a no-SDXL render: _generate_visual returns None (no local
     render attempted) so beats resolve to stock instead."""

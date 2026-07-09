@@ -149,6 +149,31 @@ def save_generated(video_id: int, beat_id: int, image_path: Path, source: str) -
     return _write_row(video_id, kind="gen", source=source, path=dest, license_=_LICENSES[source], md5=md5)
 
 
+_PLACEHOLDER_LICENSE = "synthesized placeholder (no source available)"
+
+
+def save_placeholder(video_id: int, beat_id: int) -> dict:
+    """Absolute last-resort still: a neutral graded card so a beat is NEVER left blank -- a
+    beat with no frame has nothing for the assembler to render and crashes the whole video.
+    Only reached when every stock + generation tier failed for the beat."""
+    dest = _img_dir(video_id) / f"beat_{beat_id:02d}.jpg"
+    _gradient_card().save(dest, "JPEG", quality=90)
+    return _write_row(video_id, kind="gen", source="placeholder", path=dest,
+                      license_=_PLACEHOLDER_LICENSE, md5=None)
+
+
+def _gradient_card(size: tuple[int, int] = (1920, 1080),
+                   top: tuple[int, int, int] = (20, 30, 46),
+                   bottom: tuple[int, int, int] = (6, 9, 14)) -> Image.Image:
+    """Fast vertical dark gradient: build a 1px-wide column then stretch to full width."""
+    h = size[1]
+    col = Image.new("RGB", (1, h))
+    for y in range(h):
+        t = y / h
+        col.putpixel((0, y), tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)))
+    return col.resize(size)
+
+
 def _watermark(image: Image.Image) -> None:
     """Burn a small 'AI-Generated' label into the bottom-right corner (transparency/compliance)."""
     draw = ImageDraw.Draw(image)
