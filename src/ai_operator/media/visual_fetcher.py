@@ -179,6 +179,14 @@ def acquire(video_id: int, shot_list: list[dict], stills_only: bool = False) -> 
         # Tier 3/4: generated stills (SDXL -> fal), graded for style coherence in batches.
         generated = _generate_visual(beat_id, keywords, mood, is_diagram)
         if generated is None:
+            # Last resort: a diagram/illustration beat skipped the stock tiers above, so with no
+            # image generator installed it would otherwise get NO frame at all -- and the assembler
+            # needs one per beat. Fall back to a stock photo rather than leaving the beat blank.
+            if is_diagram and (hit := _fetch_stock(keywords)) is not None:
+                record = asset_store.save_stock(video_id, beat_id, hit[0], hit[1])
+                if record is not None:
+                    saved.append(record)
+                    continue
             log.error("beat %s: no visual acquired (video %s)", beat_id, video_id)
             continue
         path, source = generated

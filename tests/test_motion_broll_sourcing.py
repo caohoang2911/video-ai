@@ -200,6 +200,19 @@ def test_acquire_prefers_video_then_falls_back_to_stills(tmp_path, monkeypatch):
     assert written["motion_beats"] == 1  # exactly one beat on real footage
 
 
+def test_acquire_diagram_beat_falls_back_to_stock_when_no_generator(tmp_path, monkeypatch):
+    """A diagram/illustration beat skips the stock tiers and needs the generator; with no SDXL/fal
+    it must fall back to a stock photo rather than leave the beat with no frame (which crashes assemble)."""
+    _patch_checkpoint(monkeypatch)
+    monkeypatch.setattr(vf, "_generate_visual", lambda *a, **k: None)          # no SDXL/fal installed
+    monkeypatch.setattr(vf, "_fetch_stock_video", lambda kw: None)
+    monkeypatch.setattr(vf, "_fetch_stock", lambda kw: ("iurl", "pexels"))     # last-resort stock hit
+    monkeypatch.setattr(vf.asset_store, "save_stock", lambda vid, bid, url, src: {"kind": "stock", "beat": bid})
+
+    saved = vf.acquire(11, [{"beat_id": 1, "keywords": ["route map", "diagram"], "mood": "informative"}])
+    assert [r["kind"] for r in saved] == ["stock"]
+
+
 def test_acquire_stills_only_skips_video_tier(tmp_path, monkeypatch):
     written = _patch_checkpoint(monkeypatch)
     video_calls: list = []
