@@ -270,6 +270,15 @@ def test_force_generate_skips_stock_and_generates_every_beat(tmp_path, monkeypat
     assert [r["kind"] for r in saved] == ["gen", "gen", "gen"]
 
 
+def test_disable_sdxl_env_skips_generation(monkeypatch):
+    """AI_OPERATOR_DISABLE_SDXL forces a no-SDXL render: _generate_visual returns None (no local
+    render attempted) so beats resolve to stock instead."""
+    monkeypatch.setenv("AI_OPERATOR_DISABLE_SDXL", "1")
+    monkeypatch.setattr(vf.local_sdxl, "generate",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("SDXL must not run when disabled")))
+    assert vf._generate_visual(1, ["ocean"], "tense", is_diagram=False) is None
+
+
 def test_clips_needed_scales_with_beat_length():
     assert vf._clips_needed(0) == 1          # unknown -> single clip
     assert vf._clips_needed(10) == 1         # short beat -> one clip

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -188,6 +189,12 @@ def _acquire_broll_clips(
 
 
 def _generate_visual(beat_id: int, keywords: list[str], mood: str, is_diagram: bool) -> tuple[Path, str] | None:
+    # Escape hatch for a fast, fully stock-footage (no-SDXL) render: AI_OPERATOR_DISABLE_SDXL
+    # turns off image generation so every beat resolves to stock (a diagram beat then falls to
+    # a stock photo via the last-resort tier instead of a slow local SDXL render).
+    if os.getenv("AI_OPERATOR_DISABLE_SDXL"):
+        return None
+
     prompt = ", ".join(k for k in keywords if k) or mood
 
     try:
