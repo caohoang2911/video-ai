@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # --- channel config (phase 02/06) ---
-    NICHE: str = "Forgotten Maritime Disasters"
+    NICHE: str = "Forgotten Disasters of History"
     YT_CATEGORY_ID: str = "27"  # 27 = Education
     WEEKLY_VIDEO_CAP: int = 3
 

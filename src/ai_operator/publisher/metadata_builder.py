@@ -13,6 +13,9 @@ from pathlib import Path
 MAX_TITLE_LEN = 100          # YouTube hard cap
 MAX_DESCRIPTION_LEN = 5000   # YouTube hard cap
 DEFAULT_MUSIC_CREDIT = "Music: royalty-free tracks (see channel About page for licenses)."
+# Name-agnostic on purpose: the channel name lives in Studio/About, not baked into every
+# upload body, so a rebrand never requires re-editing published descriptions or this code.
+SUBSCRIBE_CTA = "🔔 New documentary every week — subscribe so these stories aren't forgotten again."
 AI_DISCLOSURE = (
     "[AI disclosure] This video's narration, imagery, and editing were produced "
     "with AI assistance and reviewed by a human before publishing."
@@ -45,12 +48,18 @@ def normalize_hashtags(raw: list[str], limit: int = 5) -> list[str]:
     return out
 
 
-def build_description(script: dict, *, music_credit: str = DEFAULT_MUSIC_CREDIT) -> str:
-    """Compose the public description: base copy + sources + music credit + AI disclosure +
-    hashtags (last line; YouTube surfaces the first 3 above the title for discovery)."""
+def build_description(
+    script: dict, *, music_credit: str = DEFAULT_MUSIC_CREDIT, include_cta: bool = True
+) -> str:
+    """Compose the public description: base hook + subscribe CTA + sources + music credit +
+    AI disclosure + hashtags (last line; YouTube surfaces the first 3 above the title). The
+    hook stays first (SEO/engagement) and hashtags stay last (discovery); everything the
+    channel adds sits in between."""
     base = (script.get("description") or "").strip()
     sources = script.get("sources") or []
     parts = [base] if base else []
+    if include_cta:
+        parts.append(SUBSCRIBE_CTA)  # after the hook, before the reference/credit block
     if sources:
         parts.append("Sources:\n" + "\n".join(f"- {s}" for s in sources))
     parts.append(music_credit)

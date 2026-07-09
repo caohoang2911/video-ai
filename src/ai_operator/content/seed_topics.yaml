@@ -1,4 +1,8 @@
-# Hand-written originality seed for the "Forgotten Maritime Disasters" niche.
+# Hand-written originality seed for the "Forgotten Disasters of History" niche.
+# Maritime disasters are the anchor sub-niche (proven), then the same storytelling
+# formula extends to aviation, mining/industrial, rail, dam/structural, and fire
+# disasters — always the SAME thread: a forgotten catastrophe + the people caught
+# inside it + how it happened + why history moved on.
 # Kept in content/ (not data/, which is gitignored) — this list IS the human
 # authorship signal that anchors the channel's originality, so it must ship with git.
 #
@@ -65,3 +69,37 @@ topics:
   - title: "MV Tampomas II: Indonesia's Slow-Motion Sea Disaster"
     angle: "A fire at sea that burned for over 24 hours while rescue coordination faltered — a disaster survivors say could have ended with zero deaths."
     source_hint: "Indonesian Directorate General of Sea Transportation inquiry, regional press archives, survivor testimony"
+
+  # --- beyond the water: same formula, other kinds of forgotten disaster ---
+
+  - title: "The Benxihu Colliery Disaster: The Deadliest Mine Explosion in History"
+    angle: "A coal-dust blast in occupied China killed more than 1,500 miners — then wartime censorship on both sides buried the worst mining disaster ever recorded."
+    source_hint: "Japanese occupation-era colliery records, post-war Chinese labor ministry accounts, contemporary press under censorship"
+
+  - title: "The Courrières Mine Disaster: Europe's Deadliest Day Underground"
+    angle: "A dust explosion trapped over a thousand miners in France in 1906 — and the survivors who walked out after 20 days underground ignited a national labor revolt."
+    source_hint: "French mining inspectorate inquiry, Compagnie des mines de Courrières records, contemporary labor-press archives"
+
+  - title: "The Balvano Train Disaster: The Wreck Italy Kept Quiet"
+    angle: "Hundreds of stowaway passengers quietly asphyxiated on a stalled steam train inside a mountain tunnel in 1944 — a death toll wartime authorities never fully published."
+    source_hint: "Italian State Railways wartime inquiry, Allied occupation records, local Basilicata parish and press archives"
+
+  - title: "The Banqiao Dam Failure: The Flood the World Wasn't Told About"
+    angle: "A cascade of dam failures in 1975 China killed on the scale of a small war — and stayed a state secret for over a decade while the official toll shrank."
+    source_hint: "declassified Chinese hydrology-ministry records, later academic reconstructions, post-disclosure survivor accounts"
+
+  - title: "The St. Francis Dam Failure: The Night an Engineer's Legacy Collapsed"
+    angle: "California's second-deadliest disaster broke 12 hours after its chief engineer personally inspected and cleared it — a case study in expertise that couldn't see its own blind spot."
+    source_hint: "Los Angeles coroner's inquest transcripts, California state investigation records, William Mulholland testimony archives"
+
+  - title: "The Iroquois Theatre Fire: The 'Fireproof' Building That Killed Hundreds"
+    angle: "A packed holiday matinee in a theatre advertised as fireproof became the deadliest single-building fire in US history — and rewrote exit and safety codes worldwide."
+    source_hint: "Chicago coroner's inquest records, National Fire Protection Association historical archives, contemporary press"
+
+  - title: "LANSA Flight 508: The Girl Who Fell From the Sky and Walked Out of the Jungle"
+    angle: "A lightning-struck airliner broke apart over the Amazon in 1971, leaving a teenage survivor to walk 10 days out of the rainforest alone — a survival story the disaster's cause nearly erased."
+    source_hint: "Peruvian civil aviation accident report, survivor's own published account, contemporary aviation-safety archives"
+
+  - title: "American Airlines Flight 191: The Deadliest Crash America Forgot"
+    angle: "The worst aviation accident on US soil unfolded in seconds on takeoff in 1979 — and faded from memory precisely because there was no mid-air mystery to keep it in the news."
+    source_hint: "NTSB accident report, FAA airworthiness directive records, contemporary Chicago press archives"
