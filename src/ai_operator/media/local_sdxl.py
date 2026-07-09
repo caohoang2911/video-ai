@@ -36,7 +36,10 @@ def _load_pipeline():
     import torch
     from diffusers import StableDiffusionXLPipeline
 
-    pipe = StableDiffusionXLPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.float16)
+    # float32, not float16: SDXL's VAE decode overflows to NaN in fp16 on the MPS backend for
+    # some seeds/prompts, producing all-black frames. fp32 is ~2x slower but numerically stable
+    # on Apple Silicon (M1 Max 64GB has the headroom); attention slicing keeps peak memory down.
+    pipe = StableDiffusionXLPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.float32)
     pipe = pipe.to("mps")
     pipe.enable_attention_slicing()
     _pipeline = pipe
@@ -55,6 +58,13 @@ def generate(prompt: str, *, is_diagram: bool = True, seed: int | None = None) -
     generator = torch.Generator(device="mps").manual_seed(seed) if seed is not None else None
     result = pipe(prompt=full_prompt, num_inference_steps=INFERENCE_STEPS, generator=generator)
     image = result.images[0]
+
+    # Guard against a residual VAE-NaN (all-black) frame silently shipping: fail loudly so the
+    # caller can retry/fall back rather than burning a black shot into the render.
+    import numpy as np
+
+    if float(np.asarray(image).mean()) < 5.0:
+        raise RuntimeError("SDXL produced a near-black frame (VAE numerical instability)")
 
     fd, path_str = tempfile.mkstemp(suffix=".png", prefix="sdxl_")
     os.close(fd)
