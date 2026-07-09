@@ -33,9 +33,11 @@ STEP = "visual_fetch"
 _MAP_DIAGRAM_HINTS = ("map", "diagram", "chart", "route", "schematic", "illustration", "reenact", "blueprint")
 STOCK_TIMEOUT_SEC = 5
 STOCK_VIDEO_TIMEOUT_SEC = 8   # video search returns more metadata than photo search
-# Local SDXL runs fp32 on Apple-Silicon MPS (fp16 NaNs to black frames), ~90-120s/image; the
-# bound must clear that or every generation is abandoned mid-render and the beat is left blank.
-SDXL_TIMEOUT_SEC = 240
+# Local SDXL runs fp32 on Apple-Silicon MPS (fp16 NaNs to black frames): ~90-120s/image idle,
+# but up to ~5min/image under load (thermal/memory pressure, gen-all's 10 back-to-back images).
+# The worker pool waits for completion on exit regardless, so a too-tight bound just DISCARDS a
+# finished image and drops the beat to a (rate-limited) stock fallback -- keep it generous.
+SDXL_TIMEOUT_SEC = 600
 FAL_TIMEOUT_SEC = 30
 COHERENCE_BATCH_SIZE = 10
 COHERENCE_MIN_RATIO = 0.8
