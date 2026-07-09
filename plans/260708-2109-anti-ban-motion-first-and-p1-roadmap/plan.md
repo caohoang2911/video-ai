@@ -62,7 +62,7 @@ everything downstream waits for it.
 | 3 | [EDSA review checklist](./phase-03-edsa-review-checklist.md) | Done |
 | 4 | [Motion-first b-roll sourcing](./phase-04-motion-first-b-roll-sourcing.md) | Done (live-API E2E gated) |
 | 5 | [Hybrid assembler + ffmpeg encode](./phase-05-hybrid-assembler-ffmpeg-encode.md) | Done (5a ffmpeg encode ~10x faster · 5b motion b-roll assembly) |
-| 6 | [Scheduler + analytics loop](./phase-06-scheduler-analytics-loop.md) | Pending |
+| 6 | [Scheduler + analytics loop](./phase-06-scheduler-analytics-loop.md) | Done |
 | 7 | [Observability + deploy](./phase-07-observability-deploy.md) | Pending |
 | 8 | [Validation run + kill-criteria](./phase-08-validation-run-kill-criteria.md) | Pending |
 

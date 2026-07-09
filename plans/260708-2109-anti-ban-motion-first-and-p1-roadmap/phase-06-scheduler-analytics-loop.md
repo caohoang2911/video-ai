@@ -1,7 +1,7 @@
 ---
 phase: 6
 title: "Scheduler + analytics loop"
-status: pending
+status: done
 priority: P2
 effort: "4-6h"
 dependencies: [1, 2, 3, 5]

@@ -151,7 +151,14 @@ def _load_script(video: Video) -> dict:
 def _maybe_mark_voiced(video: Video) -> None:
     audio_ready = checkpoint.is_done(video.id, _TTS_STEP)
     visuals_ready = checkpoint.is_done(video.id, _VISUAL_STEP)
-    if audio_ready and visuals_ready and video.state != VideoState.VOICED.value:
+    # `can_transition` guard makes gen-audio/gen-visuals safe to re-run on an already-advanced
+    # video (e.g. the pipeline runner resuming a RENDERED one): there's no edge back to VOICED
+    # from RENDERED+, so silently skip instead of raising InvalidTransition.
+    if (
+        audio_ready and visuals_ready
+        and video.state != VideoState.VOICED.value
+        and can_transition(video.state, VideoState.VOICED)
+    ):
         assert_transition(video.state, VideoState.VOICED)
         video.state = VideoState.VOICED.value
         log.info("video %s -> voiced", video.id)
