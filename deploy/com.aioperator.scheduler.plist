@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for login-persistent always-on operation on macOS.
+  Runs the crash-restarting supervisor (which runs the scheduler). KeepAlive relaunches
+  the supervisor itself if it is ever killed.
+
+  Install (edit the two absolute paths first):
+    cp deploy/com.aioperator.scheduler.plist ~/Library/LaunchAgents/
+    launchctl load  ~/Library/LaunchAgents/com.aioperator.scheduler.plist
+  Stop / remove:
+    launchctl unload ~/Library/LaunchAgents/com.aioperator.scheduler.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aioperator.scheduler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/ABSOLUTE/PATH/TO/video-ai/deploy/run-operator.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/ABSOLUTE/PATH/TO/video-ai</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/ABSOLUTE/PATH/TO/video-ai/output/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/ABSOLUTE/PATH/TO/video-ai/output/logs/launchd.err.log</string>
+</dict>
+</plist>

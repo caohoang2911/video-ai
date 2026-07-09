@@ -1,7 +1,7 @@
 ---
 phase: 7
 title: "Observability + deploy"
-status: pending
+status: done
 priority: P3
 effort: "3-4h"
 dependencies: [6]
@@ -43,10 +43,10 @@ still open). Log ffmpeg/API failures with enough context to debug unattended.
 5. Verify: `health` runs against the dev DB; deploy runner starts/stops the scheduler cleanly.
 
 ## Success Criteria
-- [ ] `operator health` shows one-screen status (states, budget, quota, last publish, recent errors, retention/CTR, `output/` disk usage).
-- [ ] Scheduler runs under a supervisor that restarts it on crash (Mac always-on).
-- [ ] `docs/deployment-guide.md` documents the run/stop procedure; optional Dockerfile present.
-- [ ] compile + import clean.
+- [x] `operator health` shows one-screen status (states, budget, quota, last publish, recent errors, retention/CTR, `output/` disk usage). — `ops/health.py` (`snapshot`/`render`), verified live on dev DB.
+- [x] Scheduler runs under a supervisor that restarts it on crash (Mac always-on). — `deploy/run-operator.sh` (backoff restart) + `deploy/com.aioperator.scheduler.plist` (launchd KeepAlive).
+- [x] `docs/deployment-guide.md` documents the run/stop procedure; optional Dockerfile present. — `deploy/Dockerfile` (core, `libx264`, not activated).
+- [x] compile + import clean. — imports clean; `tests/test_ops_health.py` (14 cases) green.
 
 ## Risk Assessment
 - Over-engineering: keep to log + DB + one status command (no metrics stack at P0).

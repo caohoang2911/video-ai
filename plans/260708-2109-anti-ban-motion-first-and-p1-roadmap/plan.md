@@ -1,7 +1,7 @@
 ---
 title: "Anti-ban hardening + motion-first + P1 automation (increment 2)"
 description: "Anti-ban/flag improvements (voice consistency, payoff/POV, thumbnail_text, EDSA), motion-first hybrid video pipeline, and P1 automation (scheduler/analytics, observability/deploy, validation) on top of committed phases 01-06."
-status: pending
+status: done
 priority: P1
 branch: "main"
 tags: [python, youtube, anti-ban, tts, moviepy, ffmpeg, scheduler, ai-video]
@@ -63,8 +63,8 @@ everything downstream waits for it.
 | 4 | [Motion-first b-roll sourcing](./phase-04-motion-first-b-roll-sourcing.md) | Done (live-API E2E gated) |
 | 5 | [Hybrid assembler + ffmpeg encode](./phase-05-hybrid-assembler-ffmpeg-encode.md) | Done (5a ffmpeg encode ~10x faster · 5b motion b-roll assembly) |
 | 6 | [Scheduler + analytics loop](./phase-06-scheduler-analytics-loop.md) | Done |
-| 7 | [Observability + deploy](./phase-07-observability-deploy.md) | Pending |
-| 8 | [Validation run + kill-criteria](./phase-08-validation-run-kill-criteria.md) | Pending |
+| 7 | [Observability + deploy](./phase-07-observability-deploy.md) | Done (health snapshot · deploy supervisor/launchd/Dockerfile) |
+| 8 | [Validation run + kill-criteria](./phase-08-validation-run-kill-criteria.md) | Done (PASS/KILL/INSUFFICIENT harness) |
 
 ## Dependency graph
 ```

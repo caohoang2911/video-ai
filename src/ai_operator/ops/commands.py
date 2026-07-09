@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from typing import Optional
 
 import typer
 
 from ..logging_setup import setup_logging
-from . import analytics_puller, keepalive, pipeline_runner, scheduler
+from . import analytics_puller, health, keepalive, pipeline_runner, scheduler, validation
 
 
 def register(app: typer.Typer) -> None:
@@ -42,3 +44,20 @@ def register(app: typer.Typer) -> None:
         """Force an OAuth token refresh so the refresh token never lapses."""
         setup_logging()
         typer.echo("OAuth token refreshed" if keepalive.refresh_token() else "YouTube not configured")
+
+    @app.command("health")
+    def health_cmd(json_out: bool = typer.Option(False, "--json", help="Emit the raw snapshot dict")) -> None:
+        """One-screen operator status: states, budget, quotas, last publish, errors, disk."""
+        setup_logging()
+        snap = health.snapshot()
+        typer.echo(json.dumps(snap, indent=2, default=str) if json_out else health.render(snap))
+
+    @app.command("validation-report")
+    def validation_report_cmd(
+        window: int = typer.Option(20, "--window", help="Number of most-recent published videos to evaluate"),
+        json_out: bool = typer.Option(False, "--json", help="Emit the raw result dict"),
+    ) -> None:
+        """P0 go/no-go: aggregate the window and emit PASS_P0 / KILL_P0 / INSUFFICIENT_DATA."""
+        setup_logging()
+        result = validation.evaluate(window=window)
+        typer.echo(json.dumps(asdict(result), indent=2, default=str) if json_out else validation.render(result))
