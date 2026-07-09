@@ -65,10 +65,10 @@ def test_produce_ok_when_quota_healthy(monkeypatch):
     assert scheduler.produce_skip_reason() is None
 
 
-def test_publish_skips_when_char_quota_exhausted(monkeypatch):
-    monkeypatch.setattr(scheduler.char_guard, "check_char_quota", lambda: _status(exhausted=True, used=100_000))
+def test_publish_is_not_char_gated(monkeypatch):
+    # publishing spends no ElevenLabs chars -> an exhausted char quota must NOT block publish
     monkeypatch.setattr(scheduler.quota_throttle, "throttle_ok", lambda: True)
-    assert "exhausted" in (scheduler.publish_skip_reason() or "")
+    assert scheduler.publish_skip_reason() is None
 
 
 def test_publish_skips_when_weekly_cadence_cap_reached(monkeypatch):

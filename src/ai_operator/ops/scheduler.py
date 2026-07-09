@@ -24,7 +24,7 @@ from ..db.state_machine import VideoState
 from ..logging_setup import get_logger
 from ..publisher import quota_throttle
 from ..publisher.publish import publish
-from . import analytics_puller, keepalive, pipeline_runner
+from . import alerting, analytics_puller, keepalive, pipeline_runner
 
 log = get_logger("ops.scheduler")
 
@@ -48,10 +48,9 @@ def produce_skip_reason() -> str | None:
 
 
 def publish_skip_reason() -> str | None:
-    """None = ok to publish; else why to skip (char quota exhausted, or weekly cadence cap hit)."""
-    status = char_guard.check_char_quota()
-    if status.exhausted:
-        return f"ElevenLabs char quota exhausted ({status.chars_used}/{status.quota}) for {status.ym}"
+    """None = ok to publish; else why to skip. Publishing an already-voiced video spends NO
+    ElevenLabs chars, so publish is deliberately NOT char-gated -- gating it would idle the
+    approved backlog at month-end for no saving. Only the weekly cadence cap applies here."""
     if not quota_throttle.throttle_ok():
         return f"weekly cadence cap reached ({quota_throttle.uploads_last_7_days()}/{settings.WEEKLY_VIDEO_CAP} in 7d)"
     return None
@@ -70,7 +69,7 @@ def _next_approved_video_id() -> int | None:
 def produce_job() -> None:
     reason = produce_skip_reason()
     if reason:
-        log.warning("produce SKIPPED + ALERT: %s", reason)
+        alerting.alert(f"produce skipped — {reason}")  # quota exhausted: no more videos this month
         return
     try:
         vid = pipeline_runner.run_new()
@@ -82,7 +81,7 @@ def produce_job() -> None:
 def publish_job(now: datetime | None = None) -> None:
     reason = publish_skip_reason()
     if reason:
-        log.warning("publish SKIPPED + ALERT: %s", reason)
+        log.info("publish skipped — %s", reason)  # routine cadence throttle, not an alert
         return
     video_id = _next_approved_video_id()
     if video_id is None:
@@ -107,7 +106,8 @@ def keepalive_job() -> None:
     try:
         keepalive.refresh_token()
     except Exception as exc:  # noqa: BLE001
-        log.error("keepalive job failed: %s", exc)
+        # A dead refresh token silently breaks every future upload -- alert loudly, not just log.
+        alerting.alert(f"OAuth keepalive FAILED (uploads will break until re-auth): {exc}")
 
 
 def build_scheduler():
