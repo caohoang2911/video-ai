@@ -113,9 +113,43 @@ def test_burn_and_mux_muxes_narration_and_keeps_body_length(tmp_path):
     body = ffmpeg_encode.burn_and_mux(base, srt, nar, None, tmp_path / "body.mp4")
 
     streams = _probe(body)["streams"]
-    assert any(s["codec_type"] == "audio" for s in streams)      # narration muxed in
+    audio = next(s for s in streams if s["codec_type"] == "audio")
     assert any(s["codec_type"] == "video" for s in streams)
+    # forced stereo 44100 so the body matches the stereo intro/outro cards at the concat boundary
+    assert int(audio["channels"]) == 2 and int(audio["sample_rate"]) == 44100
     assert abs(ffmpeg_encode.probe_duration(body) - 2.0) < 0.3    # body length == narration, no intro shift
+
+
+def test_burn_and_mux_skips_subtitles_on_empty_srt(tmp_path):
+    """A speechless narration -> empty SRT: must not crash; the base video passes straight through."""
+    base = tmp_path / "base.mp4"
+    _silent_clip(base, seconds=1.5)
+    nar = tmp_path / "narration.mp3"
+    _tone(nar, seconds=1.5)
+    empty = srt_writer.write_srt([], tmp_path / "captions.srt")   # 0-byte file
+    assert empty.stat().st_size == 0
+
+    body = ffmpeg_encode.burn_and_mux(base, empty, nar, None, tmp_path / "body.mp4")
+    streams = _probe(body)["streams"]
+    assert any(s["codec_type"] == "video" for s in streams)
+    assert any(s["codec_type"] == "audio" for s in streams)
+
+
+def test_concat_copy_audio_reencode_produces_uniform_stereo(tmp_path):
+    """Final-join path: video stream-copied, audio re-encoded to one stereo track."""
+    a, b = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    _silent_clip(a, seconds=1.0)
+    _silent_clip(b, seconds=1.0)
+    # give the clips a (mono) audio track so re-encode has something to normalize to stereo
+    for clip in (a, b):
+        tmp = clip.with_suffix(".wav.mp4")
+        subprocess.run(["ffmpeg", "-y", "-i", str(clip), "-f", "lavfi", "-i", "sine=frequency=200",
+                        "-shortest", "-c:v", "copy", "-c:a", "aac", "-ac", "1", str(tmp)],
+                       check=True, capture_output=True)
+        tmp.replace(clip)
+    out = ffmpeg_encode.concat_copy([a, b], tmp_path / "joined.mp4", audio_reencode=True)
+    audio = next(s for s in _probe(out)["streams"] if s["codec_type"] == "audio")
+    assert int(audio["channels"]) == 2
 
 
 # --------------------------------------------------------------------------------------

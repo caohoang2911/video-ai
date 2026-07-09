@@ -47,13 +47,20 @@ def probe_duration(path: str | Path) -> float:
     return float(out.stdout.strip())
 
 
-def concat_copy(inputs: list[Path], out: Path) -> Path:
-    """Stream-copy concat (no re-encode) of same-spec MP4s via the concat demuxer. Inputs must
-    share codec/pix_fmt/fps -- guaranteed here because every producer targets one 24fps spec."""
+def concat_copy(inputs: list[Path], out: Path, *, audio_reencode: bool = False) -> Path:
+    """Concat same-spec MP4s via the concat demuxer. Video is always stream-copied (no re-encode,
+    no quality loss). `audio_reencode` re-encodes the audio to one uniform stereo AAC track --
+    used for the final intro+body+outro join, where independently-encoded AAC segments otherwise
+    carry per-segment encoder-priming that stream-copy can't reconcile (non-monotonic DTS at the
+    boundaries). Inputs must share video codec/pix_fmt/fps (guaranteed: every producer targets 24fps)."""
     out = Path(out)
     listing = out.parent / f"{out.stem}_concat.txt"
     listing.write_text("".join(f"file '{Path(p).resolve()}'\n" for p in inputs), encoding="utf-8")
-    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(out)])
+    codec = (
+        ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "44100"]
+        if audio_reencode else ["-c", "copy"]
+    )
+    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listing), *codec, str(out)])
     listing.unlink(missing_ok=True)
     return out
 
@@ -65,26 +72,38 @@ def burn_and_mux(base: Path, srt: Path, narration: Path, music: str | Path | Non
     base, srt, narration, out = Path(base), Path(srt), Path(narration), Path(out)
     dur = probe_duration(narration)
     fade = min(FADE_SECONDS, dur / 4) if dur else FADE_SECONDS
-    vfilter = f"[0:v]subtitles={srt.name}:force_style='{_SUB_STYLE}'[vout]"
+    # A speechless narration yields an empty SRT; the subtitles filter aborts on a 0-byte file,
+    # so only burn captions when there are cues -- otherwise pass the base video straight through.
+    has_caps = srt.exists() and srt.stat().st_size > 0
+
+    parts: list[str] = []
+    if has_caps:
+        parts.append(f"[0:v]subtitles={srt.name}:force_style='{_SUB_STYLE}'[vout]")
+        vmap = "[vout]"
+    else:
+        vmap = "0:v"
 
     cmd = ["ffmpeg", "-y", "-i", str(base), "-i", str(narration)]
     if music:
         cmd += ["-i", str(music)]
-        afilter = (
+        parts.append(
             f"[2:a]aloop=loop=-1:size=2000000000,atrim=0:{dur:.3f},"
             f"volume={MUSIC_VOLUME},afade=t=in:d={fade:.3f},afade=t=out:st={max(0.0, dur - fade):.3f}:d={fade:.3f}[mus];"
             f"[1:a][mus]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
         )
-        filter_complex = f"{vfilter};{afilter}"
         amap = "[aout]"
     else:
-        filter_complex = vfilter
         amap = "1:a"
 
+    if parts:
+        cmd += ["-filter_complex", ";".join(parts)]
     cmd += [
-        "-filter_complex", filter_complex, "-map", "[vout]", "-map", amap,
+        "-map", vmap, "-map", amap,
         *video_encode_args(), "-r", str(FPS), "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out),
+        # Narration is mono; force stereo 44100 so the body matches the intro/outro cards exactly
+        # and the final stream-copy concat produces a spec-conformant MP4 (YouTube ingest).
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "44100",
+        "-movflags", "+faststart", str(out),
     ]
     _run(cmd, cwd=out.parent)
     return out

@@ -26,9 +26,8 @@ dependencies = [
     "requests>=2.31",
     "requests-cache>=1.2",
     "requests-ratelimiter>=0.6",
-    # --- assembler (phase 04) ---
-    "moviepy>=2.2",               # 2.2.1: `from moviepy import ...`, `.with_*` API
-    "Pillow==11.1.0",             # research-confirmed stable for MoviePy 2.2.1 TextClip (12.x breaks; 10.2.0 fallback)
+    # --- assembler ---
+    "Pillow>=10.2",               # thumbnail/asset watermarking (PIL); render path is ffmpeg-native now
     "faster-whisper>=1.2",        # 1.2.x; CPU-only on Apple Silicon (no Metal)
     # --- review gate (phase 05) ---
     "python-telegram-bot>=21.8",

@@ -49,8 +49,10 @@ def render_segment(image_path: str | Path, duration: float, out_path: str | Path
     cmd = [
         "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
         "-vf", vf,
-        "-c:v", "libx264", "-t", f"{duration:.3f}", "-r", str(FPS),
-        "-pix_fmt", "yuv420p", str(out_path),
+        # ultrafast + near-lossless crf: this segment is an intermediate the encode pass re-reads
+        # and re-encodes, so spend no time on its compression -- keep quality (crf 18) but not speed.
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+        "-t", f"{duration:.3f}", "-r", str(FPS), "-pix_fmt", "yuv420p", str(out_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:

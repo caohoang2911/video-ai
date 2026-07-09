@@ -62,6 +62,11 @@ def assemble_video(video_id: int) -> dict:
     narration_dur = ffmpeg_encode.probe_duration(narration_path)
     durations = compute_beat_durations(shot_list, narration_dur)
 
+    # Cards first: they are cheap but can fail on a missing drawtext font -- fail fast here,
+    # before the expensive segment render + whisper + hardware encode.
+    intro = branding.make_intro(title or "", video_dir / "intro.mp4")
+    outro = branding.make_outro(video_dir / "outro.mp4")
+
     segments_dir = video_dir / "segments"
     segments = render_segments(shot_list, durations, video_dir / "img", segments_dir)
 
@@ -71,9 +76,7 @@ def assemble_video(video_id: int) -> dict:
     body = ffmpeg_encode.burn_and_mux(
         base, srt_path, narration_path, _resolve_music_path(video_id, video_dir), video_dir / "body.mp4"
     )
-    intro = branding.make_intro(title or "", video_dir / "intro.mp4")
-    outro = branding.make_outro(video_dir / "outro.mp4")
-    ffmpeg_encode.concat_copy([intro, body, outro], final_path)
+    ffmpeg_encode.concat_copy([intro, body, outro], final_path, audio_reencode=True)
 
     rendered_duration = int(round(ffmpeg_encode.probe_duration(final_path)))
     _cleanup_intermediates(segments_dir, [base, body, intro, outro])
