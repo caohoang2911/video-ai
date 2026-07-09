@@ -73,7 +73,17 @@ def _complete_anthropic(system: str, user: str, *, max_tokens: int, step: str, v
         record_actual(ledger_id, 0.0)
         raise
     record_actual(ledger_id, actual)
-    return response.content[0].text
+    return _extract_text(response)
+
+
+def _extract_text(response) -> str:
+    """Join the text blocks of a Messages response. Newer Claude models can emit a leading
+    `ThinkingBlock` (extended thinking), so `content[0]` is not guaranteed to be the text --
+    blindly reading `content[0].text` then AttributeErrors and the caller falls back to Gemini."""
+    text = "".join(b.text for b in response.content if getattr(b, "type", None) == "text")
+    if not text:
+        raise LLMError("Anthropic response had no text block")
+    return text
 
 
 def _complete_gemini(system: str, user: str, *, max_tokens: int, step: str, video_id: int | None) -> str:
