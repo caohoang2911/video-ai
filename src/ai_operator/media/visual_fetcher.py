@@ -11,12 +11,16 @@ scarcity for obscure wrecks is expected, not an error.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 from .. import checkpoint
+from ..assembler.beat_timing import compute_beat_durations
+from ..assembler.ffmpeg_encode import probe_duration
+from ..config import OUTPUT_DIR
 from ..logging_setup import get_logger
 from . import asset_store, cloud_flux, local_sdxl, stock_clients
 
@@ -33,6 +37,10 @@ FAL_TIMEOUT_SEC = 30
 COHERENCE_BATCH_SIZE = 10
 COHERENCE_MIN_RATIO = 0.8
 MOTION_TARGET_RATIO = 0.5     # aim for >=50% of beats on real footage; below this is logged, not failed
+# A long beat gets several DISTINCT clips (montage) instead of one short clip looped over and over:
+# one clip per ~TARGET_CLIP_SEC of screen time, capped so a single beat can't drain the search.
+TARGET_CLIP_SEC = 12.0
+MAX_CLIPS_PER_BEAT = 4
 
 
 @dataclass
@@ -88,12 +96,63 @@ def _fetch_stock(keywords: list[str]) -> tuple[str, str] | None:
     return _fetch_first(query, stock_clients.search_pexels, stock_clients.search_pixabay, STOCK_TIMEOUT_SEC)
 
 
-def _fetch_stock_video(keywords: list[str]) -> tuple[str, str] | None:
-    """First non-empty stock-VIDEO hit from Pexels/Pixabay; None if both empty/timeout."""
+def _fetch_stock_video_list(keywords: list[str], n: int) -> list[tuple[str, str]]:
+    """Up to `n` DISTINCT stock-VIDEO (url, source) for a beat's montage, Pexels first then
+    Pixabay. Empty list if both come back empty or the search times out."""
     query = " ".join(keywords[:4])
-    return _fetch_first(
-        query, stock_clients.search_pexels_video, stock_clients.search_pixabay_video, STOCK_VIDEO_TIMEOUT_SEC
-    )
+
+    async def _gather():
+        loop = asyncio.get_event_loop()
+        pex = loop.run_in_executor(None, stock_clients.search_pexels_video, query)
+        pix = loop.run_in_executor(None, stock_clients.search_pixabay_video, query)
+        return await asyncio.wait_for(asyncio.gather(pex, pix), timeout=STOCK_VIDEO_TIMEOUT_SEC)
+
+    try:
+        pex_urls, pix_urls = asyncio.run(_gather())
+    except Exception as exc:
+        log.warning("stock video fetch timed out/failed for %r: %s", query, exc)
+        return []
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for url, src in [(u, "pexels") for u in pex_urls] + [(u, "pixabay") for u in pix_urls]:
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append((url, src))
+        if len(out) >= n:
+            break
+    return out
+
+
+def _estimate_beat_seconds(video_id: int, shot_list: list[dict]) -> list[float]:
+    """Seconds each beat will run, to size its montage. Uses the real narration length (same
+    split assemble uses) when narration.mp3 exists; 0.0 (=> one clip) when it can't be probed."""
+    narration = OUTPUT_DIR / str(video_id) / "narration.mp3"
+    if not narration.exists():
+        return [0.0] * len(shot_list)
+    try:
+        return compute_beat_durations(shot_list, probe_duration(narration))
+    except Exception as exc:  # noqa: BLE001 - estimate only; fall back to single-clip beats
+        log.warning("beat-duration estimate failed (%s) -> one clip per beat", exc)
+        return [0.0] * len(shot_list)
+
+
+def _clips_needed(beat_seconds: float) -> int:
+    """One montage clip per ~TARGET_CLIP_SEC of screen time (>=1, capped). 0/unknown -> 1."""
+    if beat_seconds <= 0:
+        return 1
+    return max(1, min(MAX_CLIPS_PER_BEAT, math.ceil(beat_seconds / TARGET_CLIP_SEC)))
+
+
+def _acquire_broll_clips(video_id: int, beat_id: int, keywords: list[str], n_clips: int) -> list[dict]:
+    """Download + persist up to `n_clips` DISTINCT clips for a beat (md5 dedup drops repeats,
+    a bad download/normalize is skipped). Returns the saved records (may be fewer, or empty)."""
+    recs: list[dict] = []
+    for url, source in _fetch_stock_video_list(keywords, n_clips):
+        rec = asset_store.save_video_broll(video_id, beat_id, url, source, index=len(recs))
+        if rec is not None:
+            recs.append(rec)
+    return recs
 
 
 def _generate_visual(beat_id: int, keywords: list[str], mood: str, is_diagram: bool) -> tuple[Path, str] | None:
@@ -150,30 +209,31 @@ def acquire(video_id: int, shot_list: list[dict], stills_only: bool = False) -> 
     pending: list[_GeneratedItem] = []
     motion_beats = 0
     total_beats = 0
+    beat_seconds = _estimate_beat_seconds(video_id, shot_list)
 
-    for beat in shot_list:
+    for i, beat in enumerate(shot_list):
         total_beats += 1
         beat_id = beat["beat_id"]
         keywords = beat.get("keywords", [])[:4]
         mood = beat.get("mood", "")
         is_diagram = _is_diagram_beat(beat)
 
-        record = None
-        # Tier 1: motion b-roll (skipped for map/diagram beats -- footage rarely fits them --
-        # and for stills-only runs). A download/normalize miss returns None -> fall through.
+        # Tier 1: motion b-roll montage (skipped for map/diagram beats -- footage rarely fits
+        # them -- and for stills-only runs). A long beat pulls several DISTINCT clips so it
+        # isn't one short clip looped repeatedly; no clip lands -> fall through to stills.
         if not is_diagram and not stills_only:
-            vhit = _fetch_stock_video(keywords)
-            if vhit is not None:
-                record = asset_store.save_video_broll(video_id, beat_id, vhit[0], vhit[1])
-                if record is not None:
-                    motion_beats += 1
+            broll = _acquire_broll_clips(video_id, beat_id, keywords, _clips_needed(beat_seconds[i]))
+            if broll:
+                saved.extend(broll)
+                motion_beats += 1
+                continue
 
         # Tier 2: stock photo (Ken Burns later) where no footage landed.
-        if record is None and not is_diagram:
+        record = None
+        if not is_diagram:
             hit = _fetch_stock(keywords)
             if hit is not None:
                 record = asset_store.save_stock(video_id, beat_id, hit[0], hit[1])
-
         if record is not None:
             saved.append(record)
             continue

@@ -92,6 +92,30 @@ def test_broll_shorter_than_beat_is_looped_to_full_duration(tmp_path, monkeypatc
     assert abs(float(_probe(segs[0])["format"]["duration"]) - 5.0) < 0.25
 
 
+def test_broll_montage_concatenates_multiple_clips_for_one_beat(tmp_path, monkeypatch):
+    """A beat with several b-roll clips plays them back-to-back (montage) and still fits the
+    beat duration exactly -- distinct footage instead of one clip looped."""
+    Session = _session_factory(tmp_path)
+    monkeypatch.setattr(segment_builder, "SessionLocal", Session)
+    broll_dir, seg_dir = tmp_path / "broll", tmp_path / "segments"
+    _norm_clip(broll_dir / "beat_01.mp4", seconds=4.0)      # clip index 0
+    _norm_clip(broll_dir / "beat_01_01.mp4", seconds=4.0)   # clip index 1
+
+    with Session() as s:
+        s.add(Asset(video_id=3, kind="video_broll", source="pixabay",
+                    url_or_path=str(broll_dir / "beat_01.mp4"), license="cc0", md5="a"))
+        s.add(Asset(video_id=3, kind="video_broll", source="pixabay",
+                    url_or_path=str(broll_dir / "beat_01_01.mp4"), license="cc0", md5="b"))
+        s.commit()
+
+    # the two clips are grouped + ordered under one beat
+    assert [p.name for p in segment_builder._broll_by_beat(3)[1]] == ["beat_01.mp4", "beat_01_01.mp4"]
+
+    segs = segment_builder.build_segments([{"beat_id": 1, "keywords": ["k"], "mood": "m"}], [10.0], 3,
+                                          tmp_path / "img", seg_dir)
+    assert abs(float(_probe(segs[0])["format"]["duration"]) - 10.0) < 0.25
+
+
 def test_orphan_broll_without_asset_row_is_ignored(tmp_path, monkeypatch):
     """A broll/*.mp4 on disk with no Asset row must NOT be picked -- the still is used instead."""
     Session = _session_factory(tmp_path)  # empty DB: no video_broll rows

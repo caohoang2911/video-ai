@@ -90,11 +90,14 @@ def save_stock(video_id: int, beat_id: int, url: str, source: str) -> dict | Non
     return _write_row(video_id, kind="stock", source=source, path=dest, license_=_LICENSES[source], md5=md5)
 
 
-def save_video_broll(video_id: int, beat_id: int, url: str, source: str) -> dict | None:
+def save_video_broll(video_id: int, beat_id: int, url: str, source: str, index: int = 0) -> dict | None:
     """Download a stock VIDEO clip, dedup by raw-content md5, normalize to 1920x1080@24fps
     (audio stripped), and persist an `Asset(kind="video_broll")`. Returns None on a
     duplicate, a failed download, or a normalize failure -- the caller then falls back to
-    stills for that beat, so a single bad clip never blocks the whole video."""
+    stills for that beat, so a single bad clip never blocks the whole video.
+
+    `index` distinguishes multiple montage clips for one beat: the first (index 0) keeps the
+    plain `beat_NN.mp4` name, extra clips are `beat_NN_01.mp4`, `beat_NN_02.mp4`, ..."""
     try:
         resp = requests.get(url, timeout=_VIDEO_DOWNLOAD_TIMEOUT_SEC)
         resp.raise_for_status()
@@ -110,8 +113,9 @@ def save_video_broll(video_id: int, beat_id: int, url: str, source: str) -> dict
         return None
 
     broll_dir = _broll_dir(video_id)
-    raw = broll_dir / f"beat_{beat_id:02d}.raw.mp4"
-    dest = broll_dir / f"beat_{beat_id:02d}.mp4"
+    suffix = "" if index == 0 else f"_{index:02d}"
+    raw = broll_dir / f"beat_{beat_id:02d}{suffix}.raw.mp4"
+    dest = broll_dir / f"beat_{beat_id:02d}{suffix}.mp4"
     raw.write_bytes(resp.content)
     try:
         video_normalize.normalize(raw, dest)
