@@ -59,21 +59,36 @@ def _normalize_spec_vf() -> str:
     )
 
 
-def _synth_card(text: str, bg_hex: str, out: Path) -> Path:
-    """A title/end card: solid background + centered wrapped text + silent stereo AAC."""
+def _synth_card(
+    text: str,
+    bg_hex: str,
+    out: Path,
+    *,
+    size: tuple[int, int] = (WIDTH, HEIGHT),
+    seconds: float = CARD_SECONDS,
+    fontsize: int = 64,
+    wrap_cols: int = _WRAP_COLS,
+) -> Path:
+    """A title/end card: solid background + centered wrapped text + silent stereo AAC.
+    Defaults are the landscape spec; the Shorts builder passes portrait size + tighter wrap."""
     out = Path(out)
+    w, h = size
     card_txt = out.parent / f"{out.stem}_text.txt"
-    wrapped = "\n".join(textwrap.wrap(text, _WRAP_COLS)) or " "
+    # Wrap per input line: textwrap.wrap alone would collapse explicit line breaks, which
+    # card copy uses deliberately (fragment / fragment / CTA).
+    wrapped = "\n".join(
+        line for para in text.split("\n") for line in (textwrap.wrap(para, wrap_cols) or [""])
+    ).strip("\n") or " "
     card_txt.write_text(wrapped, encoding="utf-8")
     drawtext = (
         f"drawtext=fontfile='{_drawtext_font()}':textfile={card_txt.name}:"
-        f"fontcolor=white:fontsize=64:line_spacing=16:x=(w-text_w)/2:y=(h-text_h)/2"
+        f"fontcolor=white:fontsize={fontsize}:line_spacing=16:x=(w-text_w)/2:y=(h-text_h)/2"
     )
     cmd = [
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c={bg_hex}:s={WIDTH}x{HEIGHT}:r={FPS}",
+        "-f", "lavfi", "-i", f"color=c={bg_hex}:s={w}x{h}:r={FPS}",
         "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-vf", drawtext, "-t", f"{CARD_SECONDS}",
+        "-vf", drawtext, "-t", f"{seconds}",
         *video_encode_args(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
         "-ar", "44100", "-ac", "2", str(out),
     ]

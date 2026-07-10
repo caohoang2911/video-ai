@@ -32,6 +32,11 @@ class Video(Base):
     # unique work-unit key: blocks duplicate create/charge/upload on retry
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
 
+    # A Short is a first-class child Video walking the SAME lifecycle/review gate/publish
+    # path as a main; `kind` is the only discriminator, `parent_id` links to its main video.
+    kind: Mapped[str] = mapped_column(String(8), default="main", index=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), default=None)
+
     script_path: Mapped[str | None] = mapped_column(String(500), default=None)
     audio_path: Mapped[str | None] = mapped_column(String(500), default=None)
     video_path: Mapped[str | None] = mapped_column(String(500), default=None)

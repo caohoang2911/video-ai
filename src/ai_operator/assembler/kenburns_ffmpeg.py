@@ -20,12 +20,19 @@ MAX_ZOOM = 1.3
 ZOOM_STEP = 0.0015
 
 
-def render_segment(image_path: str | Path, duration: float, out_path: str | Path, zoom_in: bool) -> Path:
+def render_segment(
+    image_path: str | Path,
+    duration: float,
+    out_path: str | Path,
+    zoom_in: bool,
+    size: tuple[int, int] = (WIDTH, HEIGHT),
+) -> Path:
     """Render one Ken Burns MP4 segment from a still image.
 
     `zoom_in=True` zooms 1.0 -> MAX_ZOOM over the clip; `False` zooms MAX_ZOOM -> 1.0.
     Alternating direction per beat (caller's job) avoids every shot in the video zooming
     the same way, which reads as visually monotonous over a 10-minute runtime.
+    `size` defaults to landscape; the Shorts builder passes 1080x1920.
     """
     image_path = Path(image_path)
     if not image_path.exists():
@@ -40,11 +47,12 @@ def render_segment(image_path: str | Path, duration: float, out_path: str | Path
         # start already zoomed-in on frame 1, then relax back out to 1.0
         zoom_expr = f"if(eq(on,1),{MAX_ZOOM},max(zoom-{ZOOM_STEP},1.0))"
 
+    w, h = size
     # Upscale 2x before zoompan so the filter has sub-pixel headroom to pan/zoom without
-    # visible stair-stepping on the final 1080p output.
+    # visible stair-stepping on the final output.
     vf = (
-        f"scale={WIDTH * 2}:{HEIGHT * 2},"
-        f"zoompan=z='{zoom_expr}':d={frames}:s={WIDTH}x{HEIGHT}:fps={FPS}"
+        f"scale={w * 2}:{h * 2},"
+        f"zoompan=z='{zoom_expr}':d={frames}:s={w}x{h}:fps={FPS}"
     )
     cmd = [
         "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),

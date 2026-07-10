@@ -54,5 +54,5 @@ def test_different_params_are_distinct_jobs(temp_db):
 def test_allowlist_matches_expected_surface():
     assert JOB_COMMANDS == frozenset({
         "produce", "gen-topics", "gen-audio", "gen-visuals",
-        "revoice", "assemble", "publish", "pull-analytics",
+        "revoice", "assemble", "publish", "pull-analytics", "gen-shorts",
     })

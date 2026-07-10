@@ -52,6 +52,9 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
 def init_db() -> None:
-    """Create runtime dirs + all tables (idempotent)."""
+    """Create runtime dirs + all tables + pending column migrations (idempotent)."""
     ensure_dirs()
     Base.metadata.create_all(engine)
+    from . import schema_migrations  # local import: avoids a cycle at module load
+
+    schema_migrations.apply_pending(engine)

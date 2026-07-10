@@ -48,10 +48,24 @@ def publish(
             )
         video_path, thumb_path, script_path = video.video_path, video.thumb_path, video.script_path
         state, title, tags, description = video.state, video.title, video.tags, video.description
+        kind, parent_id = video.kind, video.parent_id
         existing = s.scalar(
             select(Upload).where(Upload.video_id == video_id).order_by(Upload.id.desc())
         )
         existing_yt_id = existing.youtube_video_id if existing else None
+
+        # A Short funnels viewers to its parent — publishing one before the parent is live
+        # would ship a dead link, so the parent's YouTube id is a hard prerequisite.
+        parent_youtube_id = None
+        if kind == "short":
+            parent_youtube_id = s.scalar(
+                select(Upload.youtube_video_id).where(Upload.video_id == parent_id)
+            )
+            if not parent_youtube_id:
+                raise ValueError(
+                    f"short {video_id}: parent video {parent_id} is not on YouTube yet — "
+                    f"publish the parent first"
+                )
 
     cached = checkpoint.artifacts_of(video_id, _STEP)
     youtube_video_id = existing_yt_id or (cached or {}).get("youtube_video_id")
@@ -95,6 +109,8 @@ def publish(
             publish_at_iso=publish_at_iso,
             category_id=settings.YT_CATEGORY_ID,
             title_override=title_override,
+            kind=kind,
+            parent_youtube_id=parent_youtube_id,
         )
         service = build_service()
         youtube_video_id = youtube_uploader.upload(service, video_path, body)
@@ -111,6 +127,7 @@ def publish(
 
     _ensure_upload_row(video_id, youtube_video_id, publish_at_iso)
     _try_submit_ab(video_id, video_path, script)
+    _try_enqueue_shorts(video_id)
     return youtube_video_id
 
 
@@ -138,6 +155,28 @@ def _ensure_upload_row(video_id: int, youtube_video_id: str, publish_at_iso: str
                 )
             )
         s.commit()
+
+
+def _try_enqueue_shorts(video_id: int) -> None:
+    """A freshly-published MAIN video queues one gen-shorts job (the scheduler drains it).
+    Kind-guarded so a published short never spawns shorts; best-effort — a queue hiccup
+    must never fail a completed publish."""
+    try:
+        with SessionLocal() as s:
+            video = s.get(Video, video_id)
+            if video is None or video.kind != "main":
+                return
+            has_children = s.scalar(
+                select(Video.id).where(Video.parent_id == video_id).limit(1)
+            )
+        if has_children:
+            return
+        from ..web.job_queue import enqueue  # local import: publisher must not need web at load
+
+        enqueue("gen-shorts", video_id=video_id)
+        log.info("enqueued gen-shorts for published main %s", video_id)
+    except Exception as exc:  # deliberately broad: shorts are a follow-up, not part of publish
+        log.warning("gen-shorts enqueue skipped for video %s (non-blocking): %s", video_id, exc)
 
 
 def _try_submit_ab(video_id: int, video_path: str | None, script: dict) -> None:

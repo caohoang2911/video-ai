@@ -10,15 +10,23 @@
       {% for st in states %}<option value="{{ st }}" {{ 'selected' if st == state else '' }}>{{ st }}</option>{% endfor %}
     </select>
   </label>
+  <label>Loại
+    <select name="kind" onchange="this.form.submit()">
+      <option value="">tất cả</option>
+      <option value="main" {{ 'selected' if kind == 'main' else '' }}>video chính</option>
+      <option value="short" {{ 'selected' if kind == 'short' else '' }}>short</option>
+    </select>
+  </label>
   <noscript><button type="submit">Lọc</button></noscript>
 </form>
 
 <table>
-  <thead><tr><th>ID</th><th>Trạng thái</th><th>Tiêu đề</th><th>Thời lượng (giây)</th><th>Cần lồng tiếng lại?</th><th>Cập nhật lúc</th></tr></thead>
+  <thead><tr><th>ID</th><th>Loại</th><th>Trạng thái</th><th>Tiêu đề</th><th>Thời lượng (giây)</th><th>Cần lồng tiếng lại?</th><th>Cập nhật lúc</th></tr></thead>
   <tbody>
   {% for v in videos %}
     <tr>
       <td><a href="/videos/{{ v.id }}">#{{ v.id }}</a></td>
+      <td>{% if v.kind == 'short' %}<span class="pill">short ↦ <a href="/videos/{{ v.parent_id }}">#{{ v.parent_id }}</a></span>{% else %}<span class="pill">chính</span>{% endif %}</td>
       <td><span class="pill">{{ v.state }}</span></td>
       <td>{{ v.title or '—' }}</td>
       <td>{{ v.duration_sec or '—' }}</td>
@@ -26,7 +34,7 @@
       <td class="muted">{{ v.updated_at }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="6" class="muted">Chưa có video.</td></tr>
+    <tr><td colspan="7" class="muted">Chưa có video.</td></tr>
   {% endfor %}
   </tbody>
 </table>

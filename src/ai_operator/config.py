@@ -61,6 +61,8 @@ class Settings(BaseSettings):
 
     # --- channel config (phase 02/06) ---
     NICHE: str = "Forgotten Disasters of History"
+    # Shown on branded render surfaces (Shorts end card); matches the live YouTube channel.
+    CHANNEL_NAME: str = "Their Final Hours"
     YT_CATEGORY_ID: str = "27"  # 27 = Education
     WEEKLY_VIDEO_CAP: int = 3
 

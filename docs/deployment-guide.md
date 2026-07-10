@@ -71,6 +71,33 @@ SSH (`ssh -L 8000:127.0.0.1:8000 host`) rather than changing the bind.
 Pages: `/` dashboard, `/videos`, `/videos/{id}`, `/topics`, `/jobs`, `/costs`, `/analytics`.
 Every page has a JSON twin under `/api/...` (e.g. `curl http://127.0.0.1:8000/api/videos`).
 
+**Analytics page:** `/analytics` shows real YouTube data — channel totals (subscribers / total
+views / video count via the Data API), a cumulative-views trend chart (inline SVG), top videos,
+per-video metrics, and a **"Refresh from YouTube"** button (enqueues `pull-analytics`; the
+scheduler drains it). A "last pulled" line shows freshness.
+
+> **Revenue is not shown.** `estimatedRevenue` / RPM need the `yt-analytics-monetary.readonly`
+> OAuth scope, which is not requested (`oauth_headless.SCOPES`). To enable revenue: add that
+> scope, re-run the one-time `authorize_once` flow to mint a new refresh token, then extend
+> `analytics_puller` to query the monetary metrics. Until then the revenue columns stay empty
+> and the UI omits them.
+
+## Shorts (auto-generated from published mains)
+
+When a MAIN video reaches `published`, one `gen-shorts` job is auto-enqueued (the scheduler
+drains it). The job creates 2-3 child `Video` rows (`kind="short"`, `parent_id`), each:
+fresh ~30-45s narration built from the parent's verified facts, ending on a curiosity-gap
+question → TTS → vertical 1080×1920 render reusing the parent's images (blurred-pad + Ken
+Burns, burned captions, question end card) → the SAME human review gate as mains.
+
+- **Shorts NEVER auto-publish.** They stop at `pending_review` (or `rendered` without
+  Telegram) and upload only after the same explicit approval a main needs.
+- A short's upload description carries `#Shorts` + a `youtu.be` link to its parent; publish
+  is refused while the parent has no YouTube id (dead-funnel guard).
+- A REJECTED short is discarded, never reworked — re-roll a weak batch with the panel's
+  "Tạo lại Shorts" button (`POST /videos/{id}/regenerate-shorts`, keeps published shorts).
+- Filter the panel by kind: `/videos?kind=short`.
+
 ## Monitoring
 
 ```bash

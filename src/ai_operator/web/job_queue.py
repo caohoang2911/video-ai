@@ -33,6 +33,7 @@ JOB_COMMANDS: frozenset[str] = frozenset(
         "assemble",        # rebuild final.mp4
         "publish",         # upload an approved video
         "pull-analytics",  # refresh YouTube analytics
+        "gen-shorts",      # create child Shorts for a published main video
     }
 )
 

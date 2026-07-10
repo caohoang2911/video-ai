@@ -87,6 +87,12 @@ def _pull_analytics(_job: Job) -> None:
     analytics_puller.pull_all()
 
 
+def _gen_shorts(job: Job) -> None:
+    from . import shorts_runner  # local import: shorts pull in LLM/render deps lazily
+
+    shorts_runner.generate_shorts(_require_video(job), force=bool(_param(job, "force", False)))
+
+
 # The ONLY command->function binding. Kept in lockstep with web.job_queue.JOB_COMMANDS
 # (a test asserts the two sets are equal), so no command can be enqueued without a handler.
 DISPATCH: dict[str, Callable[[Job], Any]] = {
@@ -98,6 +104,7 @@ DISPATCH: dict[str, Callable[[Job], Any]] = {
     "assemble": _assemble,
     "publish": _publish,
     "pull-analytics": _pull_analytics,
+    "gen-shorts": _gen_shorts,
 }
 
 

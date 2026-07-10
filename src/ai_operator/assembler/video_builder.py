@@ -76,7 +76,9 @@ def assemble_video(video_id: int) -> dict:
 
     base = ffmpeg_encode.concat_copy(segments, video_dir / "base.mp4")
     body = ffmpeg_encode.burn_and_mux(
-        base, srt_path, narration_path, _resolve_music_path(video_id, video_dir), video_dir / "body.mp4"
+        base, srt_path, narration_path, _resolve_music_path(video_id, video_dir), video_dir / "body.mp4",
+        # same ambient glow/flicker the Shorts use — stills-based footage reads less static
+        pre_fx=ffmpeg_encode.ambient_glow_fx(narration_dur, (WIDTH, HEIGHT)),
     )
     ffmpeg_encode.concat_copy([intro, body, outro], final_path, audio_reencode=True)
 

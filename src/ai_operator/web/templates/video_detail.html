@@ -4,9 +4,14 @@
 {% set msg = request.query_params.get('msg') %}
 {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 
-<h1>Video #{{ video.id }} <span class="pill">{{ video.state }}</span></h1>
-<p class="muted">chủ đề {{ video.topic_id or '—' }} · tạo {{ video.created_at }} · cập nhật {{ video.updated_at }}
-  {% if video.needs_revoice %} · <b class="warn">cần lồng tiếng lại</b>{% endif %}</p>
+<div id="vstatus" hx-get="/videos/{{ video.id }}" hx-trigger="every 3s" hx-select="#vstatus" hx-swap="outerHTML">
+  <h1>Video #{{ video.id }} <span class="pill {{ video.state }}">{{ video.state }}</span>
+    {% if video.kind == 'short' %}<span class="pill">SHORT</span>{% endif %}</h1>
+  <p class="muted">chủ đề {{ video.topic_id or '—' }} · tạo {{ video.created_at }} · cập nhật {{ video.updated_at }}
+    {% if video.kind == 'short' %} · video gốc: <a href="/videos/{{ video.parent_id }}">#{{ video.parent_id }}</a>{% endif %}
+    {% if last_step %} · bước xong gần nhất: <b>{{ last_step }}</b>{% endif %}
+    {% if video.needs_revoice %} · <b class="warn">cần lồng tiếng lại</b>{% endif %}</p>
+</div>
 
 <section class="grid">
   <div class="card">
@@ -55,6 +60,25 @@
     {% endfor %}
   </div>
 </section>
+
+{% if video.kind == 'main' %}
+<section class="card">
+  <h3>Shorts ({{ shorts | length }})</h3>
+  {% if shorts %}
+  <table><thead><tr><th>ID</th><th>Trạng thái</th><th>Tiêu đề</th></tr></thead><tbody>
+    {% for sh in shorts %}
+    <tr><td><a href="/videos/{{ sh.id }}">#{{ sh.id }}</a></td>
+      <td><span class="pill">{{ sh.state }}</span></td><td>{{ sh.title or '—' }}</td></tr>
+    {% endfor %}
+  </tbody></table>
+  {% else %}<p class="muted">Chưa có short nào (tự tạo sau khi video chính được đăng).</p>{% endif %}
+  <form method="post" action="/videos/{{ video.id }}/regenerate-shorts"
+        onsubmit="return confirm('Bỏ các short chưa đăng của video này và tạo loạt mới?')">
+    <button type="submit">Tạo lại Shorts</button>
+  </form>
+  <p class="muted">Tạo lại sẽ bỏ các short chưa đăng và sinh loạt mới; short đã đăng giữ nguyên.</p>
+</section>
+{% endif %}
 
 <section class="card">
   <h3>Bản thắng thử nghiệm A/B</h3>

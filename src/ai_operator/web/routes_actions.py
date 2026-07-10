@@ -15,7 +15,8 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from ..db import InvalidTransition
+from ..db import InvalidTransition, SessionLocal
+from ..db.models import Video
 from ..publisher import ab_variants
 from ..review import decision_codes as dc
 from ..review.decision_store import record_decision
@@ -62,6 +63,28 @@ def enqueue_for_video(request: Request, video_id: int, command: str, motion: boo
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return action_result(request, job, "/jobs")
+
+
+@router.post("/videos/{video_id}/regenerate-shorts")
+def regenerate_shorts(request: Request, video_id: int):
+    """Re-roll a main video's Shorts batch: discards its non-published shorts and generates
+    a fresh set (gen-shorts with force). Only mains have shorts — 400 for a short."""
+    with SessionLocal() as s:
+        video = s.get(Video, video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail=f"video {video_id} not found")
+    if video.kind != "main":
+        raise HTTPException(status_code=400, detail="only a main video can regenerate shorts")
+    job = enqueue("gen-shorts", video_id=video_id, params={"force": True})
+    return action_result(request, job, "/jobs")
+
+
+@router.post("/analytics/refresh")
+def refresh_analytics(request: Request):
+    """Pull fresh YouTube analytics now — enqueues the pull-analytics job (idempotency key
+    dedupes repeat clicks while one is already pending/running)."""
+    job = enqueue("pull-analytics")
+    return action_result(request, job, "/analytics?msg=queued")
 
 
 @router.post("/videos/{video_id}/decision")

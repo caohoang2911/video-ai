@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
+from .. import checkpoint
 from ..config import OUTPUT_DIR
 from ..db.engine import SessionLocal
 from ..db.models import Asset, Decision, Upload, Video
@@ -43,6 +44,7 @@ _DECISION_TARGETS = {
 def _video_row(v: Video) -> dict:
     return {
         "id": v.id, "state": v.state, "topic_id": v.topic_id,
+        "kind": v.kind, "parent_id": v.parent_id,
         "title": v.title, "duration_sec": v.duration_sec,
         "needs_revoice": v.needs_revoice, "reject_reason": v.reject_reason,
         "created_at": iso(v.created_at), "updated_at": iso(v.updated_at),
@@ -61,14 +63,18 @@ def _video_detail(v: Video) -> dict:
 
 
 @router.get("/videos")
-def list_videos(request: Request, state: str | None = None):
+def list_videos(request: Request, state: str | None = None, kind: str | None = None):
     stmt = select(Video).order_by(Video.updated_at.desc())
     if state:
         stmt = stmt.where(Video.state == state)
+    if kind:
+        stmt = stmt.where(Video.kind == kind)
     with SessionLocal() as s:
         videos = [_video_row(v) for v in s.scalars(stmt).all()]
         states = [st for (st,) in s.execute(select(Video.state).distinct()).all()]
-    return render(request, "videos.html", {"videos": videos, "state": state, "states": sorted(states)})
+    return render(request, "videos.html", {
+        "videos": videos, "state": state, "states": sorted(states), "kind": kind,
+    })
 
 
 @router.get("/videos/{video_id}")
@@ -103,8 +109,16 @@ def video_detail(request: Request, video_id: int):
             "publish_at": iso(upload.publish_at), "ab_status": upload.ab_status,
             "winning_title": upload.winning_title, "winning_thumbnail": upload.winning_thumbnail,
         }
+        shorts = [
+            {"id": c.id, "state": c.state, "title": c.title}
+            for c in s.scalars(
+                select(Video).where(Video.parent_id == video_id).order_by(Video.id)
+            ).all()
+        ]
     allowed = sorted(c for c, t in _DECISION_TARGETS.items() if can_transition(v.state, t))
     return render(request, "video_detail.html", {
         "video": detail, "assets": assets, "costs": costs,
         "decisions": decisions, "upload": upload_row, "allowed_decisions": allowed,
+        "shorts": shorts,  # children of a main; empty for a short
+        "last_step": checkpoint.last_step(video_id),  # live pipeline position while rendering
     })
