@@ -260,7 +260,7 @@ def test_force_generate_skips_stock_and_generates_every_beat(tmp_path, monkeypat
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("stock photo consulted")))
     gen_beats: list[int] = []
     monkeypatch.setattr(vf, "_generate_visual",
-                        lambda bid, kw, mood, dia: (gen_beats.append(bid), (tmp_path / f"g{bid}.png", "sdxl"))[1])
+                        lambda bid, kw, mood, dia, image_prompt="": (gen_beats.append(bid), (tmp_path / f"g{bid}.png", "sdxl"))[1])
     monkeypatch.setattr(vf, "_flush_generated_batch",
                         lambda vid, items: [{"kind": "gen", "beat": it.beat_id} for it in items])
 
@@ -293,6 +293,42 @@ def test_disable_sdxl_env_skips_generation(monkeypatch):
     monkeypatch.setattr(vf.local_sdxl, "generate",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("SDXL must not run when disabled")))
     assert vf._generate_visual(1, ["ocean"], "tense", is_diagram=False) is None
+
+
+def test_illustration_beat_skips_stock_and_uses_image_prompt(tmp_path, monkeypatch):
+    """A beat the script marks visual_kind=illustration must bypass BOTH stock tiers and be
+    generated from its image_prompt (the written-out scene), not from bag-of-keywords."""
+    _patch_checkpoint(monkeypatch)
+    monkeypatch.setattr(vf, "_acquire_broll_clips",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("stock video consulted")))
+    monkeypatch.setattr(vf, "_fetch_stock",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("stock photo consulted")))
+    prompts: list[str] = []
+
+    def _gen(bid, kw, mood, dia, image_prompt=""):
+        prompts.append(image_prompt)
+        return (tmp_path / f"g{bid}.png", "sdxl")
+
+    monkeypatch.setattr(vf, "_generate_visual", _gen)
+    monkeypatch.setattr(vf, "_flush_generated_batch",
+                        lambda vid, items: [{"kind": "gen", "beat": it.beat_id} for it in items])
+
+    beat = {"beat_id": 1, "keywords": ["eastland hull"], "mood": "tense",
+            "visual_kind": "illustration",
+            "image_prompt": "The SS Eastland rolling onto her side at the Chicago dock, 1915, crowds on the wharf."}
+    saved = vf.acquire(50, [beat])
+
+    assert [r["kind"] for r in saved] == ["gen"]
+    assert prompts == [beat["image_prompt"]]  # the scene description reached the generator
+
+
+def test_generate_visual_prefers_image_prompt_over_keywords(monkeypatch, tmp_path):
+    monkeypatch.delenv("AI_OPERATOR_DISABLE_SDXL", raising=False)
+    seen: list[str] = []
+    monkeypatch.setattr(vf, "_run_with_timeout",
+                        lambda fn, t, prompt, **kw: (seen.append(prompt), tmp_path / "x.png")[1])
+    vf._generate_visual(1, ["kw1", "kw2"], "mood", is_diagram=False, image_prompt="a written scene")
+    assert seen == ["a written scene"]
 
 
 def test_clips_needed_scales_with_beat_length():

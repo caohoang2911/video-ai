@@ -48,6 +48,12 @@ class ShotBeat(BaseModel):
     # 3-6 word searchable label; becomes a YouTube chapter title ("Key Moments" in Google
     # search rank per-chapter). Defaulted so pre-chapter scripts still load.
     chapter_title: str = ""
+    # "illustration" -> generate the visual (story/era-specific scene stock can't show);
+    # "footage" -> stock motion b-roll (truly generic mood shot). Defaulted for old scripts.
+    visual_kind: str = ""
+    # For illustration beats: 1-2 sentences describing the exact scene for the image
+    # generator (subject, era-correct details, mood, composition). Beats bare keywords.
+    image_prompt: str = ""
 
 
 class PayoffNode(BaseModel):

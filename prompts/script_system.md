@@ -90,6 +90,16 @@ stock-footage fetcher. Each beat:
 - `chapter_title`: a 3-6 word searchable label for this beat ("The Collision in the
   Fog", "Four Days Without Rescue") — it becomes a YouTube chapter, so use concrete
   nouns a viewer might search, never generic labels like "Part 2" or "The Middle".
+- `visual_kind`: `"illustration"` when the beat shows something SPECIFIC to this story
+  or era — the named ship, a dated event, period interiors/streets/uniforms, maps,
+  damage, rescue scenes — anything generic modern stock footage cannot honestly show.
+  `"footage"` ONLY for truly generic mood shots (open sea, storm clouds, waves, a
+  modern memorial). **When in doubt, choose "illustration"** — an accurate period
+  illustration beats an off-era stock clip every time.
+- `image_prompt` (illustration beats only): 1-2 sentences describing the exact scene
+  for a period illustrator — subject, era-correct details (year, clothing, ship name
+  on the hull only if simple), setting, lighting/mood, composition. Concrete and
+  visual, no abstractions, and NO readable text/lettering in the image.
 
 Produce at least 10 shot-list beats spread across the whole narration.
 
@@ -146,7 +156,7 @@ exactly this shape:
     {"text": "string — short beat description", "surprise_score": 4}
   ],
   "shot_list": [
-    {"beat_id": 1, "narration_span": "string", "keywords": ["string"], "mood": "string", "chapter_title": "string — 3-6 word searchable label"}
+    {"beat_id": 1, "narration_span": "string", "keywords": ["string"], "mood": "string", "chapter_title": "string — 3-6 word searchable label", "visual_kind": "illustration|footage", "image_prompt": "string — exact scene to draw (illustration beats only, else empty)"}
   ],
   "title_options": [
     {"title": "string — full video title", "thumbnail_text": "string — <=5 words for the thumbnail"}

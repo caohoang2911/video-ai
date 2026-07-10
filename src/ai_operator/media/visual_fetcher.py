@@ -57,6 +57,7 @@ class _GeneratedItem:
     is_diagram: bool
     source: str
     path: Path
+    image_prompt: str = ""  # scene description from the script; regen must reuse it
 
 
 def _is_diagram_beat(beat: dict) -> bool:
@@ -188,14 +189,18 @@ def _acquire_broll_clips(
     return recs
 
 
-def _generate_visual(beat_id: int, keywords: list[str], mood: str, is_diagram: bool) -> tuple[Path, str] | None:
+def _generate_visual(
+    beat_id: int, keywords: list[str], mood: str, is_diagram: bool, image_prompt: str = ""
+) -> tuple[Path, str] | None:
     # Escape hatch for a fast, fully stock-footage (no-SDXL) render: AI_OPERATOR_DISABLE_SDXL
     # turns off image generation so every beat resolves to stock (a diagram beat then falls to
     # a stock photo via the last-resort tier instead of a slow local SDXL render).
     if os.getenv("AI_OPERATOR_DISABLE_SDXL"):
         return None
 
-    prompt = ", ".join(k for k in keywords if k) or mood
+    # The script's per-beat image_prompt (a written-out scene: subject, era details, mood,
+    # composition) draws far closer to the narration than a bag of search keywords.
+    prompt = image_prompt.strip() or ", ".join(k for k in keywords if k) or mood
 
     try:
         t0 = time.monotonic()
@@ -223,9 +228,11 @@ def _flush_generated_batch(video_id: int, items: list[_GeneratedItem]) -> list[d
         log.warning("batch coherence %.0f%% < 80%% -- regenerating %d outlier(s)", ratio * 100, len(outliers))
         for idx in outliers:
             it = items[idx]
-            regen = _generate_visual(it.beat_id, it.keywords, it.mood, it.is_diagram)
+            regen = _generate_visual(it.beat_id, it.keywords, it.mood, it.is_diagram, image_prompt=it.image_prompt)
             if regen is not None:
-                items[idx] = _GeneratedItem(it.beat_id, it.keywords, it.mood, it.is_diagram, regen[1], regen[0])
+                items[idx] = _GeneratedItem(
+                    it.beat_id, it.keywords, it.mood, it.is_diagram, regen[1], regen[0], it.image_prompt
+                )
         ratio, _ = asset_store.grade_batch_coherence([it.path for it in items])
         log.info("post-regen batch coherence %.0f%%", ratio * 100)
     else:
@@ -260,15 +267,18 @@ def acquire(
         beat_id = beat["beat_id"]
         keywords = beat.get("keywords", [])[:4]
         mood = beat.get("mood", "")
-        is_diagram = _is_diagram_beat(beat)
+        # A beat is generated (not stock-fetched) when the script marks it `illustration` --
+        # a story/era-specific scene stock can't honestly show -- or when it matches the
+        # legacy map/diagram keyword heuristic (pre-visual_kind scripts).
+        is_diagram = _is_diagram_beat(beat) or (beat.get("visual_kind") or "").lower() == "illustration"
         # CLIP relevance text for this beat: its keywords + narration span (what the scene is about).
         text = ", ".join(keywords) + (f". {beat.get('narration_span', '')}" if beat.get("narration_span") else "")
 
         # Stock tiers are skipped entirely in force_generate mode (SDXL every beat).
         if not force_generate:
-            # Tier 1: motion b-roll montage (skipped for map/diagram beats -- footage rarely
-            # fits them -- and for stills-only runs). A long beat pulls several DISTINCT clips
-            # so it isn't one short clip looped; no clip lands -> fall through to stills.
+            # Tier 1: motion b-roll montage (skipped for illustration/diagram beats -- footage
+            # rarely fits them -- and for stills-only runs). A long beat pulls several DISTINCT
+            # clips so it isn't one short clip looped; no clip lands -> fall through to stills.
             if not is_diagram and not stills_only:
                 broll = _acquire_broll_clips(video_id, beat_id, keywords, _clips_needed(beat_seconds[i]), text)
                 if broll:
@@ -287,7 +297,9 @@ def acquire(
                 continue
 
         # Tier 3/4: generated stills (SDXL -> fal), graded for style coherence in batches.
-        generated = _generate_visual(beat_id, keywords, mood, is_diagram)
+        generated = _generate_visual(
+            beat_id, keywords, mood, is_diagram, image_prompt=beat.get("image_prompt", "")
+        )
         if generated is None:
             # Last resort for ANY beat that reached generation and failed (generator missing,
             # timed out, or a transient stock miss earlier): the assembler needs one frame per
@@ -303,7 +315,9 @@ def acquire(
             saved.append(asset_store.save_placeholder(video_id, beat_id))
             continue
         path, source = generated
-        pending.append(_GeneratedItem(beat_id, keywords, mood, is_diagram, source, path))
+        pending.append(
+            _GeneratedItem(beat_id, keywords, mood, is_diagram, source, path, beat.get("image_prompt", ""))
+        )
         if len(pending) >= COHERENCE_BATCH_SIZE:
             saved.extend(_flush_generated_batch(video_id, pending))
             pending = []
