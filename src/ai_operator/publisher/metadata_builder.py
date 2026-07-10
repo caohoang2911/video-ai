@@ -68,7 +68,9 @@ def build_description(
         parts.append("Chapters:\n" + "\n".join(chapters))
     if sources:
         parts.append("Sources:\n" + "\n".join(f"- {s}" for s in sources))
-    parts.append(music_credit)
+    # a picked library track writes its exact CC-BY credit into script.json — that
+    # attribution is a license requirement, so it wins over the generic default line
+    parts.append(script.get("music_credit") or music_credit)
     parts.append(AI_DISCLOSURE)
     hashtags = normalize_hashtags(script.get("hashtags") or [])
     if hashtags:

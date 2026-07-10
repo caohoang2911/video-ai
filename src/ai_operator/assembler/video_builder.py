@@ -18,7 +18,7 @@ from ..config import OUTPUT_DIR
 from ..db import InvalidTransition, SessionLocal, VideoState, assert_transition
 from ..db.models import Asset, Video
 from ..logging_setup import get_logger
-from . import branding, chapter_builder, ffmpeg_encode, segment_builder, srt_writer
+from . import branding, chapter_builder, ffmpeg_encode, music_picker, segment_builder, srt_writer
 from .beat_timing import compute_beat_durations
 from .caption_whisper import transcribe
 from sqlalchemy import select
@@ -112,7 +112,8 @@ def _cleanup_intermediates(segments_dir: Path, files: list[Path]) -> None:
 
 def _resolve_music_path(video_id: int, video_dir: Path) -> str | None:
     """Prefer a DB-tracked music asset (auditable license), else a manually-dropped music.mp3,
-    else silence -- most P0 videos have no music bed."""
+    else auto-pick a bed from the local royalty-free library (mood-matched, credit persisted),
+    else silence."""
     with SessionLocal() as session:
         asset = session.execute(
             select(Asset).where(Asset.video_id == video_id, Asset.kind == "music")
@@ -120,7 +121,13 @@ def _resolve_music_path(video_id: int, video_dir: Path) -> str | None:
         if asset and Path(asset.url_or_path).exists():
             return asset.url_or_path
     fallback = video_dir / "music.mp3"
-    return str(fallback) if fallback.exists() else None
+    if fallback.exists():
+        return str(fallback)
+    try:
+        return music_picker.pick_for_video(video_id, video_dir)
+    except Exception as exc:  # noqa: BLE001 - a music bed is an enhancement, never a render blocker
+        log.warning("music pick failed (%s) — rendering without music", exc)
+        return None
 
 
 def _persist_rendered_state(video_id: int, video_path: str, duration_sec: int) -> None:
