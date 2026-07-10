@@ -16,6 +16,10 @@ WORDS_PER_MINUTE = 150  # typical narrated-documentary TTS pace, used only to pi
 SINGLE_SHOT_THRESHOLD_SEC = 5 * 60
 DRAMATIC_PAUSE = '<break time="1.5s" />'
 _DRAMATIC_ENDINGS = ("...", "—")  # ellipsis / em-dash: heuristic for a dramatic beat
+# The script LLM marks reflective rests with a literal [REST] between sentences; TTS renders
+# them as real silence long enough for the music bed to swell and the viewer to absorb the beat.
+REST_PAUSE = '<break time="2.2s" />'
+_REST_MARKER = re.compile(r"\s*\[REST\]")
 
 # Split only on sentence-ending punctuation followed by whitespace -- never inside a clause
 # (a lone "." inside e.g. "Dr." would need abbreviation handling, but narration scripts are
@@ -89,6 +93,9 @@ def _build_chunks(groups: list[str]) -> list[TextChunk]:
 
 def chunk_narration(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[TextChunk]:
     """Return TTS-ready chunks: single chunk under 5min estimated, else sentence-safe + overlap."""
+    # Swap rest markers for a spoken-silence break BEFORE sentence splitting so both the
+    # single-shot and the chunked path carry it.
+    text = _REST_MARKER.sub(f" {REST_PAUSE}", text)
     sentences = split_sentences(text)
     if not sentences:
         return []

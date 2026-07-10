@@ -77,6 +77,18 @@ must add NEW information — a fact, a consequence, a perspective. If a sentence
 restates what the viewer already knows (e.g. repeating "secrecy doomed them" in new
 words), cut it and advance the story instead.
 
+## Reflective rests
+
+Wall-to-wall narration exhausts the viewer. After the closing sentence of an emotionally
+heavy section — a climax, a casualty reveal, a haunting aftermath detail — append the
+literal marker `[REST]` in the narration text. The pipeline turns it into a few seconds
+of silence where the music breathes and the viewer absorbs what they just heard.
+- Use 2-4 rests per script, only where the preceding sentence truly lands a blow.
+- Never place one in the first minute, never two in a row, never after a neutral
+  transition sentence.
+- Format: `...and no one came back. [REST] By morning, the...` (marker between sentences,
+  never inside one).
+
 ## Shot list
 
 Alongside the narration, produce a `shot_list`: an ordered list of visual beats for the

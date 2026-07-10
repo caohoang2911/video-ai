@@ -42,9 +42,11 @@ _TENSE_HINTS = (
 
 
 def _dominant_bucket(script: dict) -> str:
-    moods = " ".join(b.get("mood", "") for b in script.get("shot_list", [])).lower()
+    # mains carry beat moods in shot_list; shorts carry them in beats — same vocabulary
+    beats = script.get("shot_list") or script.get("beats") or []
+    moods = " ".join(b.get("mood", "") for b in beats).lower()
     tense = sum(moods.count(h) for h in _TENSE_HINTS)
-    calm = max(1, len(script.get("shot_list", []))) - tense
+    calm = max(1, len(beats)) - tense
     return "tense" if tense > calm else "somber"
 
 
