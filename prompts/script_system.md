@@ -100,13 +100,18 @@ is the full video title; the `thumbnail_text` completes or sharpens the title on
 thumbnail (not a reworded copy of it).
 
 **Title craft (data-backed — these formulas measurably out-click plain descriptions):**
+- **Every title MUST contain a concrete searchable entity** — the ship's name, the event's
+  common name, the place, or the year ("SS Eastland", "the Eastland Disaster", "Chicago
+  1915"). A hook with no entity ("The Ship That Sank...") gives YouTube nothing to classify
+  or rank for search — and search is a new channel's main traffic source. The formula
+  sharpens the entity; it never replaces it.
 - Keep it **under 60 characters** and front-load the strongest words (search truncates).
-- Each of the 3 variants must use a DIFFERENT formula:
-  1. **Curiosity gap** — state the outcome, withhold the cause: "The Ship That Sank in
-     14 Minutes — and No One Agrees Why".
-  2. **Specific number + paradox** — "1,012 Died in 14 Minutes. Titanic Got the Movie."
-  3. **Negative / loss framing** — loss aversion doubles click intent: "The One Mistake
-     That Killed a Thousand People", "The Warning Everyone Ignored".
+- Each of the 3 variants must use a DIFFERENT formula, each anchored on the entity:
+  1. **Curiosity gap** — state the outcome, withhold the cause: "The Eastland Sank
+     Without Ever Leaving the Dock".
+  2. **Specific number + paradox** — "844 Died 20 Feet From Shore: The Eastland Disaster".
+  3. **Negative / loss framing** — loss aversion doubles click intent: "The Safety Law
+     That Capsized the SS Eastland", "The Warning Chicago Ignored in 1915".
 - Never clickbait past the facts: the title's promise must be paid off in the script.
 
 **Thumbnail text: 3 words MAXIMUM** (under ~14 characters beats longer text in every
