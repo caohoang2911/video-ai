@@ -1,24 +1,66 @@
 {% extends "base.html" %}
 {% block title %}Thống kê{% endblock %}
 {% block content %}
-<h1>Thống kê</h1>
-<p class="muted">Số liệu mới nhất của mỗi video đã đăng.</p>
-<table>
-  <thead><tr><th>YouTube ID</th><th>Tính đến ngày</th><th>Lượt xem</th><th>Giữ chân</th><th>CTR</th><th>RPM</th><th>Doanh thu ước tính</th></tr></thead>
-  <tbody>
-  {% for a in analytics %}
-    <tr>
-      <td class="small">{{ a.youtube_video_id }}</td>
-      <td class="muted">{{ a.as_of_date }}</td>
-      <td>{{ a.views }}</td>
-      <td>{{ a.avg_view_pct }}%</td>
-      <td>{{ a.ctr }}%</td>
-      <td>{{ a.rpm }}</td>
-      <td>${{ '%.2f' | format(a.est_revenue) }}</td>
-    </tr>
+{% set msg = request.query_params.get('msg') %}
+{% if msg %}<div class="flash">Đã đưa vào hàng đợi — bộ lập lịch sẽ kéo dữ liệu YouTube.</div>{% endif %}
+
+<div class="row-between">
+  <h1>Thống kê</h1>
+  <form method="post" action="/analytics/refresh"><button type="submit">↻ Kéo từ YouTube ngay</button></form>
+</div>
+<p class="muted">
+  Cập nhật gần nhất: {{ freshness.last_pull or '(chưa kéo)' }}
+  {% if freshness.channel_fetched_at %} · Tổng kênh: {{ freshness.channel_fetched_at }}{% endif %}
+</p>
+
+<section class="grid">
+  {% if channel %}
+  <div class="card"><h3>Người đăng ký</h3><p class="big">{{ '{:,}'.format(channel.subscribers) }}</p></div>
+  <div class="card"><h3>Tổng lượt xem kênh</h3><p class="big">{{ '{:,}'.format(channel.total_views) }}</p></div>
+  <div class="card"><h3>Số video</h3><p class="big">{{ channel.video_count }}</p></div>
   {% else %}
-    <tr><td colspan="7" class="muted">Chưa có thống kê.</td></tr>
+  <div class="card"><h3>Tổng kênh</h3><p class="muted">Chưa có — bấm “Kéo từ YouTube ngay”.</p></div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>Xu hướng lượt xem (cộng dồn theo lần kéo)</h3>
+  {{ views_svg | safe }}
+</section>
+
+{% if top %}
+<section class="card">
+  <h3>Video xem nhiều nhất</h3>
+  {% set maxv = top[0].views or 1 %}
+  <ul class="kv">
+  {% for v in top %}
+    <li>
+      <span class="small">{{ v.youtube_video_id }}</span>
+      <span class="barwrap"><span class="bar" style="width: {{ (100 * v.views / maxv) | round(0, 'floor') }}%"></span></span>
+      <span>{{ '{:,}'.format(v.views) }}</span>
+    </li>
   {% endfor %}
-  </tbody>
-</table>
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h3>Chi tiết mỗi video ({{ per_video | length }})</h3>
+  <table>
+    <thead><tr><th>YouTube ID</th><th>Tính đến ngày</th><th>Lượt xem</th><th>Giữ chân</th><th>CTR</th></tr></thead>
+    <tbody>
+    {% for a in per_video %}
+      <tr>
+        <td class="small">{{ a.youtube_video_id }}</td>
+        <td class="muted">{{ a.as_of_date }}</td>
+        <td>{{ '{:,}'.format(a.views) }}</td>
+        <td>{{ a.avg_view_pct }}%</td>
+        <td>{{ a.ctr }}%</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">Chưa có thống kê.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

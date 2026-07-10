@@ -16,6 +16,7 @@ from ..db.engine import SessionLocal
 from ..db.models import Upload
 from ..db.models_ops import Analytics
 from ..logging_setup import get_logger
+from . import channel_stats
 
 log = get_logger("ops.analytics_puller")
 
@@ -114,4 +115,11 @@ def pull_all(as_of: date | None = None) -> int:
             written += 1
         except Exception as exc:  # noqa: BLE001
             log.warning("analytics update failed for %s: %s", yt_id, exc)
+
+    # Channel-level snapshot (subscribers/total views/videos) — separate, optional: its failure
+    # must never discard the per-video rows just written.
+    try:
+        channel_stats.pull_channel_stats()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("analytics: channel-stats fetch failed: %s", exc)
     return written

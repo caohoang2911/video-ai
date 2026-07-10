@@ -45,8 +45,9 @@ def _last_publish() -> str | None:
     return when.isoformat() if when else None
 
 
-def _latest_analytics_per_video() -> list[Analytics]:
-    """Each video's newest analytics snapshot (dedup many daily rows to one per video)."""
+def latest_analytics_per_video() -> list[Analytics]:
+    """Each video's newest analytics snapshot (dedup many daily rows to one per video).
+    Public: the web analytics view reuses this so the 'newest per video' rule lives in one place."""
     with SessionLocal() as s:
         rows = s.scalars(
             select(Analytics).order_by(Analytics.youtube_video_id, Analytics.as_of_date.desc())
@@ -58,7 +59,7 @@ def _latest_analytics_per_video() -> list[Analytics]:
 
 
 def _analytics_averages() -> dict:
-    rows = _latest_analytics_per_video()
+    rows = latest_analytics_per_video()
     if not rows:
         return {"videos": 0, "avg_views": 0.0, "avg_retention_pct": 0.0, "avg_ctr": 0.0}
     n = len(rows)

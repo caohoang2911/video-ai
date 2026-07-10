@@ -3,17 +3,34 @@ queue. All read-only views over the shared DB."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Request
 from sqlalchemy import func, select
 
+from .. import checkpoint
 from ..db.engine import SessionLocal
-from ..db.models_ops import Analytics, CostLedger, Job
+from ..db.models import Video
+from ..db.models_ops import CostLedger, Job
+from . import analytics_view
+from .charts import views_sparkline
 from .rendering import iso, render
 
 router = APIRouter()
 
 _JOBS_LIMIT = 100
-_ANALYTICS_LIMIT = 200
+
+
+def _fmt_elapsed(started, now: datetime) -> str | None:
+    """Human elapsed since a running job's start (started_at may come back tz-naive from SQLite)."""
+    if started is None:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    secs = int((now - started).total_seconds())
+    if secs < 0:
+        secs = 0
+    return f"{secs // 60}m {secs % 60}s" if secs >= 60 else f"{secs}s"
 
 
 @router.get("/costs")
@@ -36,30 +53,34 @@ def costs(request: Request):
 
 @router.get("/analytics")
 def analytics(request: Request):
-    """Newest analytics snapshot per video (many daily rows collapse to one per video)."""
-    with SessionLocal() as s:
-        rows = s.scalars(
-            select(Analytics).order_by(Analytics.youtube_video_id, Analytics.as_of_date.desc())
-        ).all()
-    latest: dict[str, dict] = {}
-    for a in rows:
-        latest.setdefault(a.youtube_video_id, {
-            "youtube_video_id": a.youtube_video_id, "as_of_date": iso(a.as_of_date),
-            "views": a.views, "avg_view_pct": a.avg_view_pct, "ctr": a.ctr,
-            "rpm": a.rpm, "est_revenue": a.est_revenue,
-        })
-    return render(request, "analytics.html", {"analytics": list(latest.values())[:_ANALYTICS_LIMIT]})
+    """Real YouTube analytics: channel totals + trend + top/worst + per-video table + freshness.
+    All derived from the pulled `analytics` rows (see web.analytics_view)."""
+    data = analytics_view.overview()
+    # Pre-render the trend as inline SVG so the template stays logic-free (no JS chart lib).
+    data["views_svg"] = views_sparkline(data["trend"]["views"])
+    return render(request, "analytics.html", data)
 
 
 @router.get("/jobs")
 def jobs(request: Request):
+    now = datetime.now(timezone.utc)
     with SessionLocal() as s:
         rows = s.scalars(select(Job).order_by(Job.id.desc()).limit(_JOBS_LIMIT)).all()
-        jobs_out = [
-            {"id": j.id, "command": j.command, "status": j.status,
-             "video_id": j.video_id, "topic_id": j.topic_id, "error": j.error,
-             "created_at": iso(j.created_at), "started_at": iso(j.started_at),
-             "finished_at": iso(j.finished_at)}
-            for j in rows
-        ]
-    return render(request, "jobs.html", {"jobs": jobs_out})
+        jobs_out = []
+        for j in rows:
+            elapsed = _fmt_elapsed(j.started_at, now) if j.status == "running" else None
+            # for a running job, surface the video's live pipeline position (state + last done step)
+            step = state = None
+            if j.status == "running" and j.video_id is not None:
+                v = s.get(Video, j.video_id)
+                state = v.state if v else None
+                step = checkpoint.last_step(j.video_id)
+            jobs_out.append({
+                "id": j.id, "command": j.command, "status": j.status,
+                "video_id": j.video_id, "topic_id": j.topic_id, "error": j.error,
+                "created_at": iso(j.created_at), "started_at": iso(j.started_at),
+                "finished_at": iso(j.finished_at), "elapsed": elapsed,
+                "video_state": state, "last_step": step,
+            })
+    running = [j for j in jobs_out if j["status"] == "running"]
+    return render(request, "jobs.html", {"jobs": jobs_out, "running": running})

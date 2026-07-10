@@ -37,12 +37,19 @@
     <h3>Hiệu quả video</h3>
     <p class="muted">{{ h.analytics.videos }} video · lượt xem TB {{ h.analytics.avg_views }}
       · giữ chân {{ h.analytics.avg_retention_pct }}% · CTR {{ h.analytics.avg_ctr }}%</p>
+    {% if channel %}<p class="muted">{{ '{:,}'.format(channel.subscribers) }} người đăng ký ·
+      {{ '{:,}'.format(channel.total_views) }} tổng lượt xem</p>{% endif %}
   </div>
   <div class="card">
     <h3>Đăng gần nhất</h3>
     <p class="muted">{{ h.last_publish or '(chưa có)' }}</p>
     <p class="muted">dung lượng output/: {{ (h.disk.total_bytes / 1048576) | round(1) }} MiB</p>
   </div>
+</section>
+
+<section class="card">
+  <h3>Xu hướng lượt xem kênh</h3>
+  {{ views_svg | safe }}
 </section>
 
 <section class="card">

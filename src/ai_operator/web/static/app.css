@@ -63,3 +63,8 @@ button:hover { filter: brightness(1.1); }
 .flash { background: #143050; border: 1px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; margin-bottom: 1rem; }
 pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .6rem; overflow-x: auto; font-size: .82rem; }
 details summary { cursor: pointer; color: var(--muted); margin: .3rem 0; }
+
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.barwrap { flex: 1; height: 8px; margin: 0 .8rem; background: var(--line); border-radius: 999px; overflow: hidden; }
+.bar { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.card svg { display: block; width: 100%; height: auto; }
