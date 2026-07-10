@@ -18,7 +18,7 @@ from ..config import OUTPUT_DIR
 from ..db import InvalidTransition, SessionLocal, VideoState, assert_transition
 from ..db.models import Asset, Video
 from ..logging_setup import get_logger
-from . import branding, ffmpeg_encode, segment_builder, srt_writer
+from . import branding, chapter_builder, ffmpeg_encode, segment_builder, srt_writer
 from .beat_timing import compute_beat_durations
 from .caption_whisper import transcribe
 from sqlalchemy import select
@@ -60,6 +60,7 @@ def assemble_video(video_id: int) -> dict:
     shot_list = json.loads(script_path.read_text(encoding="utf-8"))["shot_list"]
     narration_dur = ffmpeg_encode.probe_duration(narration_path)
     durations = compute_beat_durations(shot_list, narration_dur)
+    _persist_chapters(script_path, shot_list, durations)
 
     # Cards first: they are cheap but can fail on a missing drawtext font -- fail fast here,
     # before the expensive segment render + whisper + hardware encode.
@@ -86,6 +87,19 @@ def assemble_video(video_id: int) -> dict:
     _persist_rendered_state(video_id, str(final_path), rendered_duration)
     write_checkpoint(video_id, STEP, {"video_path": str(final_path), "idempotency_key": idem_key})
     return {"video_path": str(final_path), "duration_sec": rendered_duration}
+
+
+def _persist_chapters(script_path: Path, shot_list: list[dict], durations: list[float]) -> None:
+    """Write the computed YouTube chapter lines back into script.json — assemble is the only
+    step that knows real beat durations, and the publisher (or a manual-upload export) reads
+    the description metadata from script.json. Never fails the render over chapter bookkeeping."""
+    try:
+        chapters = chapter_builder.build_chapters(shot_list, durations, intro_seconds=branding.CARD_SECONDS)
+        data = json.loads(script_path.read_text(encoding="utf-8"))
+        data["chapters"] = chapters
+        script_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 - chapters are an enhancement, not a render dependency
+        log.warning("chapter persist failed (%s) — continuing without chapters", exc)
 
 
 def _cleanup_intermediates(segments_dir: Path, files: list[Path]) -> None:

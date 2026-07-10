@@ -60,6 +60,12 @@ def build_description(
     parts = [base] if base else []
     if include_cta:
         parts.append(SUBSCRIBE_CTA)  # after the hook, before the reference/credit block
+    # Chapters (computed at assemble time from real beat durations): YouTube needs the
+    # 0:00-first timestamp list verbatim in the description to segment the player, and
+    # Google surfaces the labels as independently-ranking "Key Moments" in search.
+    chapters = script.get("chapters") or []
+    if len(chapters) >= 3:  # YouTube requires at least 3 stamps to activate chapters
+        parts.append("Chapters:\n" + "\n".join(chapters))
     if sources:
         parts.append("Sources:\n" + "\n".join(f"- {s}" for s in sources))
     parts.append(music_credit)

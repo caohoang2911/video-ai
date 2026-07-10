@@ -45,6 +45,9 @@ class ShotBeat(BaseModel):
     narration_span: str
     keywords: list[str] = Field(min_length=1, max_length=4)
     mood: str
+    # 3-6 word searchable label; becomes a YouTube chapter title ("Key Moments" in Google
+    # search rank per-chapter). Defaulted so pre-chapter scripts still load.
+    chapter_title: str = ""
 
 
 class PayoffNode(BaseModel):

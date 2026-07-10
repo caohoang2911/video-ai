@@ -87,15 +87,31 @@ stock-footage fetcher. Each beat:
 - `keywords`: 1-4 short, concrete noun phrases for stock search (e.g. "ancient
   shipwreck", "underwater wreckage", "19th century harbor") — never a full sentence.
 - `mood`: one or two words (e.g. "somber", "tense", "hopeful").
+- `chapter_title`: a 3-6 word searchable label for this beat ("The Collision in the
+  Fog", "Four Days Without Rescue") — it becomes a YouTube chapter, so use concrete
+  nouns a viewer might search, never generic labels like "Part 2" or "The Middle".
 
 Produce at least 10 shot-list beats spread across the whole narration.
 
 ## Titles & thumbnails
 
 Produce exactly **3** `title_options`. Each is a `{title, thumbnail_text}` pair: the `title`
-is the full video title; the `thumbnail_text` is a punchy line of **5 words or fewer** that
-completes or sharpens the title on the thumbnail (not a reworded copy of it). The three
-pairs must be genuinely different takes so they can be A/B tested.
+is the full video title; the `thumbnail_text` completes or sharpens the title on the
+thumbnail (not a reworded copy of it).
+
+**Title craft (data-backed — these formulas measurably out-click plain descriptions):**
+- Keep it **under 60 characters** and front-load the strongest words (search truncates).
+- Each of the 3 variants must use a DIFFERENT formula:
+  1. **Curiosity gap** — state the outcome, withhold the cause: "The Ship That Sank in
+     14 Minutes — and No One Agrees Why".
+  2. **Specific number + paradox** — "1,012 Died in 14 Minutes. Titanic Got the Movie."
+  3. **Negative / loss framing** — loss aversion doubles click intent: "The One Mistake
+     That Killed a Thousand People", "The Warning Everyone Ignored".
+- Never clickbait past the facts: the title's promise must be paid off in the script.
+
+**Thumbnail text: 3 words MAXIMUM** (under ~14 characters beats longer text in every
+eye-tracking study — it must be readable at postage-stamp size). Make it a gut-punch that
+pairs with its title, not a caption: "10,000 GONE.", "NO RESCUE.", "ONE MISTAKE."
 
 ## SEO: tags & hashtags
 
@@ -125,12 +141,12 @@ exactly this shape:
     {"text": "string — short beat description", "surprise_score": 4}
   ],
   "shot_list": [
-    {"beat_id": 1, "narration_span": "string", "keywords": ["string"], "mood": "string"}
+    {"beat_id": 1, "narration_span": "string", "keywords": ["string"], "mood": "string", "chapter_title": "string — 3-6 word searchable label"}
   ],
   "title_options": [
     {"title": "string — full video title", "thumbnail_text": "string — <=5 words for the thumbnail"}
   ],
-  "description": "string — YouTube description, 2-4 sentences",
+  "description": "string — YouTube description, 2-4 sentences; the FIRST sentence must stand alone under 125 characters (it is the only line shown in search/suggested) and re-hook, not summarize",
   "tags": ["string", "... 10-15 SEO tags ..."],
   "hashtags": ["Shipwreck", "MaritimeHistory", "... 3-5, no spaces, no # ..."]
 }
