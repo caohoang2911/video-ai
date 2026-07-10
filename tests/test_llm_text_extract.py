@@ -8,7 +8,12 @@ import types
 
 import pytest
 
-from ai_operator.content.llm_client import LLMError, _extract_text
+from ai_operator.content.llm_client import (
+    _ANTHROPIC_MIN_MAX_TOKENS,
+    LLMError,
+    _effective_max_tokens,
+    _extract_text,
+)
 
 
 def _block(kind: str, **kw):
@@ -37,3 +42,12 @@ def test_extract_text_raises_when_no_text_block():
     resp = types.SimpleNamespace(content=[_block("thinking", thinking="...")])
     with pytest.raises(LLMError):
         _extract_text(resp)
+
+
+def test_effective_max_tokens_floors_for_adaptive_thinking():
+    """claude-sonnet-5 thinks by default and thinking tokens count against max_tokens — a
+    tight ceiling can be consumed entirely by thinking, yielding a no-text response. The
+    request ceiling must be floored so thinking + full output both fit."""
+    assert _effective_max_tokens(6000) == _ANTHROPIC_MIN_MAX_TOKENS
+    assert _effective_max_tokens(_ANTHROPIC_MIN_MAX_TOKENS) == _ANTHROPIC_MIN_MAX_TOKENS
+    assert _effective_max_tokens(32_000) == 32_000  # a larger explicit ask is respected
