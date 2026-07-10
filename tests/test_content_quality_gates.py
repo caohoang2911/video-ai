@@ -127,18 +127,45 @@ def test_payoff_gate_rejects_weak_script(tmp_path, monkeypatch):
         assert "weak payoff" in (v.reject_reason or "")
 
 
-def test_payoff_gate_accepts_exactly_two_strong(tmp_path, monkeypatch):
+def test_payoff_gate_accepts_strong_well_paced_script(tmp_path, monkeypatch):
     Session = _make_session_factory(tmp_path)
     monkeypatch.setattr(sg, "SessionLocal", Session)
     with Session() as s:
         s.add(Video(id=2, idempotency_key="k-ok", state=VideoState.DRAFT.value))
         s.commit()
 
-    ok = _sample_script(strong_scores=(3, 3, 2, 1, 1))  # exactly two nodes score >= 3
+    # 4 strong nodes, avg 3.6, exactly one weak node -> passes all three checks
+    ok = _sample_script(strong_scores=(5, 4, 3, 4, 2))
     sg._enforce_payoff_gate(2, ok)  # must not raise
 
     with Session() as s:
         assert s.get(Video, 2).state == VideoState.DRAFT.value  # untouched
+
+
+def test_payoff_gate_rejects_low_average(tmp_path, monkeypatch):
+    """Three strong nodes are not enough if filler drags the average down (flat overall)."""
+    Session = _make_session_factory(tmp_path)
+    monkeypatch.setattr(sg, "SessionLocal", Session)
+    with Session() as s:
+        s.add(Video(id=3, idempotency_key="k-avg", state=VideoState.DRAFT.value))
+        s.commit()
+
+    flat = _sample_script(strong_scores=(3, 3, 3, 1, 1, 1))  # strong=3 but avg=2.0
+    with pytest.raises(ValueError, match="average surprise"):
+        sg._enforce_payoff_gate(3, flat)
+
+
+def test_payoff_gate_rejects_mid_video_sag(tmp_path, monkeypatch):
+    """Two+ filler nodes (score <= 2) = the mid-video retention sag, even with a good average."""
+    Session = _make_session_factory(tmp_path)
+    monkeypatch.setattr(sg, "SessionLocal", Session)
+    with Session() as s:
+        s.add(Video(id=4, idempotency_key="k-sag", state=VideoState.DRAFT.value))
+        s.commit()
+
+    saggy = _sample_script(strong_scores=(5, 5, 4, 2, 2))  # avg 3.6, strong=3, but 2 weak nodes
+    with pytest.raises(ValueError, match="filler node"):
+        sg._enforce_payoff_gate(4, saggy)
 
 
 # --------------------------------------------------------------------------------------

@@ -46,8 +46,36 @@ proportionally for longer scripts. Each payoff node is an object:
 - `surprise_score`: 1-5 for how genuinely surprising/counterintuitive it is (1 = common
   knowledge, 3 = a non-obvious detail, 5 = a real twist that reframes the story).
 
-Be honest with the scores — at least **two** nodes must score 3 or higher or the script is
-rejected as flat/filler. Do not inflate scores; pad with a genuinely stronger reveal instead.
+Be honest with the scores — the script is rejected as flat/filler unless at least
+**three** nodes score 3+, the **average** is 3.0+, and at most **one** node scores 2 or
+below. Do not inflate scores; replace a weak beat with a genuinely stronger reveal instead.
+
+## Retention architecture (open loop, re-hook, anchor, ending)
+
+These four devices are what keep a viewer from clicking away. All are REQUIRED:
+
+1. **One central open loop.** The hook must pose ONE concrete central question (e.g. "what
+   caused the second explosion?", "why did no rescue come for four days?"). The body may
+   deepen or complicate that question, but must NOT resolve it until the final quarter of
+   the script. Reference the loop at least once mid-script ("that still doesn't explain...")
+   so the viewer remembers what they're waiting for.
+2. **A mid-script re-hook.** Roughly 40-50% through the narration, plant a turn that
+   reframes what came before — new evidence, a contradiction, a perspective flip ("but the
+   survivors told a different story"). This is where most viewers drop off; give them a
+   fresh reason to stay.
+3. **A human anchor.** Where the verified facts name a real person (a captain, a survivor,
+   an investigator), thread the story through their eyes in at least 2-3 scenes instead of
+   narrating only at the level of ships and nations. If no individual is available in the
+   facts, anchor on one vividly specific detail (an object, a place, a time of day) and
+   return to it.
+4. **An ending that resonates, not a summary.** The final 1-2 sentences must land the
+   answer to the central question AND leave one precise, haunting thought or unresolved
+   implication. Never end with a generic moral ("war is cruel") or a recap.
+
+**No premise recycling.** State the premise/stakes ONCE in the hook. Every later paragraph
+must add NEW information — a fact, a consequence, a perspective. If a sentence only
+restates what the viewer already knows (e.g. repeating "secrecy doomed them" in new
+words), cut it and advance the story instead.
 
 ## Shot list
 

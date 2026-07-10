@@ -28,11 +28,19 @@ log = get_logger("content.script_generator")
 MAX_JSON_RETRIES = 2                # spec: retry twice on invalid JSON before giving up
 CHECKPOINT_STEP = "script_generated"
 
-# Original-value gate: a documentary-exempt script must land at least this many genuinely
-# surprising payoff beats, else it reads as mass-produced filler. Tuned in one place; a
-# rejected script is logged so the threshold can be loosened if it stalls real production.
+# Original-value gate: a documentary-exempt script must land enough genuinely surprising
+# payoff beats, else it reads as mass-produced filler AND retention sags mid-video. Three
+# checks, tuned in one place; a rejected script is logged so thresholds can be loosened if
+# they stall real production:
+#   - enough STRONG nodes (>= MIN_SCORE),
+#   - a healthy AVERAGE (one great twist can't carry five flat beats),
+#   - at most one WEAK node (score <= 2) — two "common knowledge" beats is exactly the
+#     mid-video sag where viewers drop off.
 STRONG_PAYOFF_MIN_SCORE = 3
-STRONG_PAYOFF_MIN_COUNT = 2
+STRONG_PAYOFF_MIN_COUNT = 3
+PAYOFF_MIN_AVG = 3.0
+PAYOFF_WEAK_SCORE = 2
+PAYOFF_MAX_WEAK_COUNT = 1
 
 
 def generate(topic: Topic) -> ScriptOutput:
@@ -75,12 +83,25 @@ def _enforce_payoff_gate(video_id: int, script: ScriptOutput) -> None:
     flat topic into a surprising one, so mirror the research-reject path and fail hard for a
     human look — same as `research_gate` rejecting insufficient sourcing.
     """
-    strong = sum(1 for n in script.payoff_nodes if n.surprise_score >= STRONG_PAYOFF_MIN_SCORE)
+    scores = [n.surprise_score for n in script.payoff_nodes]
+    strong = sum(1 for s in scores if s >= STRONG_PAYOFF_MIN_SCORE)
+    weak = sum(1 for s in scores if s <= PAYOFF_WEAK_SCORE)
+    avg = sum(scores) / len(scores) if scores else 0.0
+
+    reason = None
     if strong < STRONG_PAYOFF_MIN_COUNT:
         reason = (
             f"weak payoff structure: {strong} node(s) scoring >= {STRONG_PAYOFF_MIN_SCORE} "
             f"(need {STRONG_PAYOFF_MIN_COUNT})"
         )
+    elif avg < PAYOFF_MIN_AVG:
+        reason = f"weak payoff structure: average surprise {avg:.1f} < {PAYOFF_MIN_AVG} (flat overall)"
+    elif weak > PAYOFF_MAX_WEAK_COUNT:
+        reason = (
+            f"weak payoff structure: {weak} filler node(s) scoring <= {PAYOFF_WEAK_SCORE} "
+            f"(max {PAYOFF_MAX_WEAK_COUNT}) — mid-video sag risk"
+        )
+    if reason:
         log.warning("video %s rejected — %s", video_id, reason)
         _fail_video(video_id, reason)
         raise ValueError(reason)
