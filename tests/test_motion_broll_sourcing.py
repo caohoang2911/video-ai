@@ -175,6 +175,9 @@ def _patch_checkpoint(monkeypatch):
     written: dict = {}
     monkeypatch.setattr(vf.checkpoint, "is_done", lambda vid, step: False)
     monkeypatch.setattr(vf.checkpoint, "write", lambda vid, step, data: written.update(data))
+    # the archival tier (Wikimedia Commons) is keyless, so without a stub these tests would
+    # hit the LIVE API; its behavior is covered in test_wikimedia_archival_pipeline.py
+    monkeypatch.setattr(vf, "_fetch_archival", lambda *a, **k: None)
     return written
 
 

@@ -1,14 +1,21 @@
-"""Pexels + Pixabay stock photo search -- cached 24h and rate-limited.
+"""Pexels + Pixabay stock photo search + Wikimedia Commons archival search -- cached 24h
+and rate-limited.
 
 Pixabay's ToS *requires* a 24h response cache for repeated queries; without it (and without
 a rate limit) retries/resumes across the pipeline would blow through both APIs' request caps
 fast. `requests_cache` and `requests_ratelimiter` compose via mixins directly on `Session`
 (the documented pattern) rather than inheriting `CachedSession`+`LimiterSession`, which would
 create a diamond-inheritance MRO neither library's docs test.
+
+Wikimedia Commons is keyless but its API etiquette requires an identifying User-Agent and a
+modest request rate; licensing there is PER-FILE (PD / CC0 / CC BY / CC BY-SA / all-rights-
+reserved mixed together), so every candidate carries its own license + attribution fields --
+the caller must persist them for the publish-phase credit line.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 
 from requests import Session
@@ -23,6 +30,12 @@ log = get_logger("stock_clients")
 _CACHE_NAME = "stock_http_cache"
 PEXELS_PER_SECOND = 3.0
 PIXABAY_PER_SECOND = 1.5
+COMMONS_PER_SECOND = 1.0
+# Archival photos predate HD -- 1000px wide is enough for a gentle Ken Burns at 1080p, while
+# the 1920px stock bar would reject nearly every pre-1930 photograph.
+COMMONS_MIN_WIDTH = 1000
+_COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+_COMMONS_UA = "ai-operator/0.1 (self-hosted documentary pipeline)"  # Wikimedia UA policy
 # Motion b-roll: prefer the smallest file that still clears 1080p -- it costs the least
 # bandwidth and the ffmpeg normalize pass rescales everything to 1920x1080 anyway.
 VIDEO_MIN_HEIGHT = 1080
@@ -40,6 +53,7 @@ class _CachedLimiterSession(CacheMixin, LimiterMixin, Session):
 
 _pexels_session: _CachedLimiterSession | None = None
 _pixabay_session: _CachedLimiterSession | None = None
+_commons_session: _CachedLimiterSession | None = None
 
 
 def _make_session(per_second: float) -> _CachedLimiterSession:
@@ -66,9 +80,36 @@ def _pixabay_client() -> _CachedLimiterSession:
     return _pixabay_session
 
 
+def _commons_client() -> _CachedLimiterSession:
+    global _commons_session
+    if _commons_session is None:
+        _commons_session = _make_session(COMMONS_PER_SECOND)
+    return _commons_session
+
+
+def _source_disabled(name: str) -> bool:
+    """True when the operator turned this source off via DISABLED_VISUAL_SOURCES in .env
+    (comma-separated names). Lets a provider that keeps returning content-mismatched hits
+    be locked out without deleting its API key."""
+    disabled = {s.strip().lower() for s in settings.DISABLED_VISUAL_SOURCES.split(",") if s.strip()}
+    return name in disabled
+
+
+def _commons_license_ok(short_name: str) -> bool:
+    """Only free-to-reuse grants pass: Public Domain family, CC0, CC BY, CC BY-SA.
+    Everything else on Commons (GFDL-only, fair use, unknown) is rejected."""
+    s = short_name.strip().lower()
+    return s.startswith(("pd", "public domain", "no restrictions", "cc0", "cc by", "cc-by"))
+
+
+def _strip_html(text: str) -> str:
+    """Commons `Artist` metadata is HTML (often a wikilink) -> plain text for a credit line."""
+    return re.sub(r"<[^>]+>", "", text).replace("\n", " ").strip()
+
+
 def search_pexels(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
     """Landscape photo candidates (>=1920w) for `keyword`; [] if unconfigured or the call fails."""
-    if not settings.PEXELS_API_KEY:
+    if _source_disabled("pexels") or not settings.PEXELS_API_KEY:
         return []
     try:
         r = _pexels_client().get(
@@ -93,7 +134,7 @@ def search_pexels(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
 
 def search_pixabay(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
     """Landscape photo candidates (>=1920w) for `keyword`; [] if unconfigured or the call fails."""
-    if not settings.PIXABAY_API_KEY:
+    if _source_disabled("pixabay") or not settings.PIXABAY_API_KEY:
         return []
     try:
         r = _pixabay_client().get(
@@ -117,6 +158,64 @@ def search_pixabay(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
     except Exception as exc:
         log.warning("pixabay search failed for %r: %s", keyword, exc)
         return []
+
+
+def search_wikimedia_commons(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
+    """Archival photo candidates from Wikimedia Commons for `keyword`; [] on failure.
+
+    Each candidate carries per-file licensing (unlike the per-provider stock licenses):
+    {"url", "thumb", "source": "wikimedia", "license", "artist", "file_page"}.
+    Only PD/CC0/CC BY/CC BY-SA bitmap files >= COMMONS_MIN_WIDTH px wide are returned;
+    `url` is the 1920px scaled render (originals can be 100MP museum scans)."""
+    if _source_disabled("wikimedia"):
+        return []
+    try:
+        r = _commons_client().get(
+            _COMMONS_API,
+            params={
+                "action": "query", "format": "json",
+                "generator": "search",
+                "gsrsearch": f"filetype:bitmap {keyword}",
+                "gsrnamespace": 6,  # File: namespace
+                "gsrlimit": per_page,
+                "prop": "imageinfo",
+                "iiprop": "url|size|extmetadata",
+                "iiurlwidth": 1920,  # scaled render + thumb template in one request
+            },
+            headers={"User-Agent": _COMMONS_UA},
+            timeout=8,
+        )
+        r.raise_for_status()
+        pages = (r.json().get("query") or {}).get("pages", {})
+    except Exception as exc:
+        log.warning("wikimedia commons search failed for %r: %s", keyword, exc)
+        return []
+
+    out: list[dict] = []
+    # generator=search returns an unordered page map; `index` restores relevance order
+    for p in sorted(pages.values(), key=lambda p: p.get("index", 0)):
+        info = (p.get("imageinfo") or [{}])[0]
+        meta = info.get("extmetadata") or {}
+        license_short = ((meta.get("LicenseShortName") or {}).get("value") or "").strip()
+        if not license_short or not _commons_license_ok(license_short):
+            continue
+        if (info.get("width") or 0) < COMMONS_MIN_WIDTH:
+            continue
+        original = info.get("url") or ""
+        if not original.lower().endswith((".jpg", ".jpeg", ".png")):
+            continue  # svg/tiff/pdf renders behave badly downstream
+        full = info.get("thumburl") or original
+        # Commons thumb URLs embed the width -- swap for a small CLIP-ranking preview
+        thumb = full.replace("/1920px-", "/480px-") if "/1920px-" in full else full
+        out.append({
+            "url": full,
+            "thumb": thumb,
+            "source": "wikimedia",
+            "license": license_short,
+            "artist": _strip_html((meta.get("Artist") or {}).get("value") or ""),
+            "file_page": info.get("descriptionurl") or "",
+        })
+    return out
 
 
 def _best_pexels_file(video: dict) -> str | None:
@@ -158,7 +257,7 @@ def _best_pixabay_file(hit: dict) -> str | None:
 def search_pexels_video(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
     """Landscape stock-VIDEO candidates (>=1080p mp4 preferred) for `keyword`; [] if
     unconfigured or the call fails. Clips are normalized to 1920x1080@24fps downstream."""
-    if not settings.PEXELS_API_KEY:
+    if _source_disabled("pexels") or not settings.PEXELS_API_KEY:
         return []
     try:
         r = _pexels_client().get(
@@ -180,7 +279,7 @@ def search_pexels_video(keyword: str, per_page: int = CANDIDATE_POOL) -> list[di
 def search_pixabay_video(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
     """Stock-VIDEO candidates (>=1080p tier preferred) for `keyword`; [] if unconfigured or the
     call fails. Pixabay video is CC0; clips are normalized to 1920x1080@24fps downstream."""
-    if not settings.PIXABAY_API_KEY:
+    if _source_disabled("pixabay") or not settings.PIXABAY_API_KEY:
         return []
     try:
         r = _pixabay_client().get(

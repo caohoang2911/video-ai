@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     PEXELS_API_KEY: str | None = None
     PIXABAY_API_KEY: str | None = None
     FAL_KEY: str | None = None
+    # Operator kill-switch: comma-separated source names ("pixabay,pexels,wikimedia") turned
+    # OFF without removing their API keys — e.g. a provider keeps returning content-mismatched
+    # hits for the channel's niche.
+    DISABLED_VISUAL_SOURCES: str = ""
 
     # --- youtube (phase 06) ---
     YT_CLIENT_ID: str | None = None

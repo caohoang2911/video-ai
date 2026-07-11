@@ -68,6 +68,11 @@ def build_description(
         parts.append("Chapters:\n" + "\n".join(chapters))
     if sources:
         parts.append("Sources:\n" + "\n".join(f"- {s}" for s in sources))
+    # archival still attributions (per-file Wikimedia licensing) — injected by the publish
+    # phase from Asset rows; CC BY lines are a license requirement, PD gets a provenance line
+    image_credits = script.get("image_credits") or []
+    if image_credits:
+        parts.append("Archival images:\n" + "\n".join(f"- {c}" for c in image_credits))
     # a picked library track writes its exact CC-BY credit into script.json — that
     # attribution is a license requirement, so it wins over the generic default line
     parts.append(script.get("music_credit") or music_credit)

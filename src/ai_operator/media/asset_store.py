@@ -90,6 +90,32 @@ def save_stock(video_id: int, beat_id: int, url: str, source: str) -> dict | Non
     return _write_row(video_id, kind="stock", source=source, path=dest, license_=_LICENSES[source], md5=md5)
 
 
+def save_archival(
+    video_id: int, beat_id: int, url: str, *, license_short: str, artist: str, file_page: str
+) -> dict | None:
+    """Download a Wikimedia Commons archival photo. Licensing is PER-FILE (unlike the
+    per-provider stock licenses), so the row's license field stores the full attribution
+    triple `license | artist | file page URL` -- the publish phase splits it to build the
+    description credit line. Returns None on duplicate/failed download."""
+    try:
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "ai-operator/0.1"})
+        resp.raise_for_status()
+    except Exception as exc:
+        log.warning("beat %s: archival download failed: %s", beat_id, exc)
+        return None
+
+    md5 = _md5_bytes(resp.content)
+    if md5 in _existing_md5s(video_id):
+        log.info("beat %s: duplicate archival image (md5=%s), skipping", beat_id, md5)
+        return None
+
+    dest = _img_dir(video_id) / f"beat_{beat_id:02d}.jpg"
+    dest.write_bytes(resp.content)
+    license_full = f"{license_short} | {artist or 'unknown author'} | {file_page}"
+    return _write_row(video_id, kind="archival", source="wikimedia", path=dest,
+                      license_=license_full, md5=md5)
+
+
 def save_video_broll(video_id: int, beat_id: int, url: str, source: str, index: int = 0) -> dict | None:
     """Download a stock VIDEO clip, dedup by raw-content md5, normalize to 1920x1080@24fps
     (audio stripped), and persist an `Asset(kind="video_broll")`. Returns None on a

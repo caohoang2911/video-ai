@@ -133,6 +133,17 @@ def _rank_candidates(text: str, candidates: list[dict]) -> list[dict]:
     return ranked
 
 
+def _fetch_archival(keywords: list[str], text: str = "") -> dict | None:
+    """Most content-relevant Wikimedia Commons ARCHIVAL photo candidate for a beat
+    (already license- and resolution-filtered by the client); None when Commons has
+    nothing usable -- the caller then falls through to generic stock/generation.
+    "Thật khi có thể, vẽ khi phải": real archival material outranks stock and AI."""
+    cands = stock_clients.search_wikimedia_commons(" ".join(keywords[:4]))
+    if not cands:
+        return None
+    return _rank_candidates(text, cands)[0]
+
+
 def _fetch_stock(keywords: list[str], text: str = "") -> tuple[str, str] | None:
     """Most content-relevant stock-PHOTO (url, source); None if both providers empty/timeout."""
     cands = _gather_candidates(
@@ -286,7 +297,22 @@ def acquire(
                     motion_beats += 1
                     continue
 
-            # Tier 2: stock photo (Ken Burns later) where no footage landed.
+            # Tier 2a: archival photo (Wikimedia Commons) -- a real photograph of the actual
+            # ship/event beats both generic stock and AI illustration for this niche.
+            record = None
+            if not is_diagram:
+                best = _fetch_archival(keywords, text)
+                if best is not None:
+                    record = asset_store.save_archival(
+                        video_id, beat_id, best["url"],
+                        license_short=best["license"], artist=best["artist"],
+                        file_page=best["file_page"],
+                    )
+            if record is not None:
+                saved.append(record)
+                continue
+
+            # Tier 2b: stock photo (Ken Burns later) where no footage/archival landed.
             record = None
             if not is_diagram:
                 hit = _fetch_stock(keywords, text)

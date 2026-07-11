@@ -24,6 +24,23 @@ log = get_logger("assembler.segment_builder")
 
 # `beat_NN.mp4` (first/only clip) or `beat_NN_KK.mp4` (extra montage clips); excludes `.raw.mp4`.
 _BEAT_RE = re.compile(r"^beat_(\d+)(?:_(\d+))?\.mp4$")
+_BEAT_IMG_RE = re.compile(r"^beat_(\d+)\.jpg$")
+
+
+def _archival_beats(video_id: int) -> set[int]:
+    """beat_ids whose still is a Wikimedia archival photo (Asset kind='archival') -- those
+    Ken Burns segments get the unifying grade so real photos cut cleanly against generated
+    stills. Beat id parsed from the filename (the Asset table has no beat column)."""
+    with SessionLocal() as s:
+        rows = s.execute(
+            select(Asset.url_or_path).where(Asset.video_id == video_id, Asset.kind == "archival")
+        ).scalars().all()
+    out: set[int] = set()
+    for p in rows:
+        m = _BEAT_IMG_RE.match(Path(p).name)
+        if m:
+            out.add(int(m.group(1)))
+    return out
 
 
 def _broll_by_beat(video_id: int) -> dict[int, list[Path]]:
@@ -90,6 +107,7 @@ def build_segments(
     img_dir, out_dir = Path(img_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     broll = _broll_by_beat(video_id)
+    archival = _archival_beats(video_id)
     n_motion = 0
 
     segments: list[Path] = []
@@ -101,7 +119,9 @@ def build_segments(
             n_motion += 1
         else:
             kenburns_ffmpeg.render_segment(
-                img_dir / f"beat_{beat_id:02d}.jpg", duration, out, zoom_in=(i % 2 == 0)
+                img_dir / f"beat_{beat_id:02d}.jpg", duration, out, zoom_in=(i % 2 == 0),
+                # ảnh tư liệu thật đi qua lớp grade đồng nhất để hoà với still SDXL
+                extra_vf=kenburns_ffmpeg.ARCHIVAL_GRADE_VF if beat_id in archival else None,
             )
         segments.append(out)
 

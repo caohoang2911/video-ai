@@ -20,12 +20,20 @@ MAX_ZOOM = 1.3
 ZOOM_STEP = 0.0015
 
 
+# Unifying treatment for archival photographs: gentle desaturation + contrast lift + fine
+# grain so a real 1910s photo and a stylized generated still cut together without a visual
+# jolt. Applied at RENDER time only -- the downloaded original stays untouched on disk as
+# the licensing/audit copy.
+ARCHIVAL_GRADE_VF = "hue=s=0.35,eq=contrast=1.06:brightness=0.02,noise=alls=6:allf=t"
+
+
 def render_segment(
     image_path: str | Path,
     duration: float,
     out_path: str | Path,
     zoom_in: bool,
     size: tuple[int, int] = (WIDTH, HEIGHT),
+    extra_vf: str | None = None,
 ) -> Path:
     """Render one Ken Burns MP4 segment from a still image.
 
@@ -33,6 +41,7 @@ def render_segment(
     Alternating direction per beat (caller's job) avoids every shot in the video zooming
     the same way, which reads as visually monotonous over a 10-minute runtime.
     `size` defaults to landscape; the Shorts builder passes 1080x1920.
+    `extra_vf` appends a filter chain after zoompan (e.g. ARCHIVAL_GRADE_VF).
     """
     image_path = Path(image_path)
     if not image_path.exists():
@@ -54,6 +63,8 @@ def render_segment(
         f"scale={w * 2}:{h * 2},"
         f"zoompan=z='{zoom_expr}':d={frames}:s={w}x{h}:fps={FPS}"
     )
+    if extra_vf:
+        vf += f",{extra_vf}"
     cmd = [
         "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
         "-vf", vf,

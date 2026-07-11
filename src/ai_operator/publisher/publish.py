@@ -15,7 +15,7 @@ from sqlalchemy import select
 from .. import checkpoint
 from ..config import settings
 from ..db.engine import SessionLocal
-from ..db.models import Upload, Video
+from ..db.models import Asset, Upload, Video
 from ..db.state_machine import VideoState, assert_transition
 from ..logging_setup import get_logger
 from . import ab_variants, metadata_builder, quota_throttle, thumbnail_setter, youtube_uploader
@@ -97,12 +97,16 @@ def publish(
         script["description"] = description
     if tags:
         script["tags"] = tags
+    # Archival-image attributions from Asset rows -> description credit block. CC BY lines
+    # are a license requirement; PD/CC0 gets one provenance line. Same delivery path as
+    # `music_credit`: injected into the script dict, rendered by build_description.
+    script["image_credits"] = _image_credits(video_id)
 
     if youtube_video_id is None:
         if not video_path:
             raise ValueError(f"video {video_id} has no video_path")
         assert_transition(state, VideoState.PUBLISHED)  # fail fast, before spending quota
-        quota_throttle.ensure_can_publish()
+        quota_throttle.ensure_can_publish(kind=kind)  # weekly cadence cap: main only
 
         body = metadata_builder.build_upload_body(
             script,
@@ -129,6 +133,32 @@ def publish(
     _try_submit_ab(video_id, video_path, script)
     _try_enqueue_shorts(video_id)
     return youtube_video_id
+
+
+def _image_credits(video_id: int) -> list[str]:
+    """Attribution lines for the video's archival stills (Asset kind='archival').
+
+    The asset row's license field holds `license | artist | file page URL` (written by
+    asset_store.save_archival). CC BY / CC BY-SA require a full credit line; PD/CC0 need
+    none, so all PD files collapse into one provenance line to save description space."""
+    with SessionLocal() as s:
+        rows = s.execute(
+            select(Asset.license).where(Asset.video_id == video_id, Asset.kind == "archival")
+        ).scalars().all()
+    credits: list[str] = []
+    public_domain_seen = False
+    for lic in rows:
+        parts = [p.strip() for p in (lic or "").split("|")]
+        if len(parts) != 3:
+            continue
+        short, artist, page = parts
+        if short.lower().startswith(("cc by", "cc-by")):
+            credits.append(f"{artist} — {short} — {page}")
+        else:
+            public_domain_seen = True
+    if public_domain_seen:
+        credits.append("Public-domain photographs via Wikimedia Commons")
+    return list(dict.fromkeys(credits))  # dedupe (same author across beats), keep order
 
 
 def _ensure_upload_row(video_id: int, youtube_video_id: str, publish_at_iso: str) -> None:
