@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # OFF without removing their API keys — e.g. a provider keeps returning content-mismatched
     # hits for the channel's niche.
     DISABLED_VISUAL_SOURCES: str = ""
+    # Char allowance of the operator's ACTUAL ElevenLabs plan (dashboard "credits"). The old
+    # hard-coded Creator-tier assumption let the pipeline plan spend far past a smaller
+    # plan's real wall. Default stays Creator (100k); set to your plan in .env.
+    ELEVENLABS_MONTHLY_CHAR_QUOTA: int = 100_000
 
     # --- youtube (phase 06) ---
     YT_CLIENT_ID: str | None = None

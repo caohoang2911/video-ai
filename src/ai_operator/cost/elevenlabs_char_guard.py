@@ -15,6 +15,11 @@ from dataclasses import dataclass
 
 from sqlalchemy import func, select
 
+import time
+
+import requests
+
+from ..config import settings
 from ..db.engine import SessionLocal
 from ..db.models_ops import CostLedger
 from ..logging_setup import get_logger
@@ -22,7 +27,44 @@ from .budget_guard import current_ym
 
 log = get_logger("elevenlabs_char_guard")
 
-CREATOR_TIER_MONTHLY_CHAR_QUOTA = 100_000  # ElevenLabs Creator plan ($22/mo) chars/mo allowance
+# ElevenLabs subscription endpoint = the SOURCE OF TRUTH for usage (what the dashboard
+# shows). The local ledger counts per ATTEMPT — including tries that fell back to free
+# edge-tts — so it overstates real spend; it stays as the offline/no-key fallback only.
+_SUBSCRIPTION_URL = "https://api.elevenlabs.io/v1/user/subscription"
+_LIVE_TTL_SEC = 600  # cache the lookup; dashboard renders + produce gates share one call
+_live_cache: tuple[float, tuple[int, int] | None] | None = None
+
+
+def _live_subscription() -> tuple[int, int] | None:
+    """(chars_used, quota) straight from ElevenLabs; None when key missing/offline
+    (callers then fall back to the internal ledger). Cached for _LIVE_TTL_SEC."""
+    global _live_cache
+    if not settings.ELEVENLABS_API_KEY:
+        return None
+    now = time.monotonic()
+    if _live_cache is not None and now - _live_cache[0] < _LIVE_TTL_SEC:
+        return _live_cache[1]
+    try:
+        r = requests.get(
+            _SUBSCRIPTION_URL, headers={"xi-api-key": settings.ELEVENLABS_API_KEY}, timeout=6
+        )
+        r.raise_for_status()
+        data = r.json()
+        value = (int(data["character_count"]), int(data["character_limit"]))
+    except Exception as exc:  # noqa: BLE001 - offline/API error must not kill quota checks
+        log.warning("elevenlabs subscription lookup failed (%s) -> using internal ledger", exc)
+        value = None
+    _live_cache = (now, value)  # failures cached too: no 6s hang on every dashboard render
+    return value
+
+# Default = Creator plan ($22/mo). The REAL wall is the operator's actual plan — override
+# with ELEVENLABS_MONTHLY_CHAR_QUOTA in .env (e.g. 40000 for the Starter-tier dashboard).
+CREATOR_TIER_MONTHLY_CHAR_QUOTA = 100_000
+
+
+def monthly_quota() -> int:
+    """Char allowance of the configured plan (.env override, defaults to Creator tier)."""
+    return settings.ELEVENLABS_MONTHLY_CHAR_QUOTA or CREATOR_TIER_MONTHLY_CHAR_QUOTA
 ALERT_THRESHOLD_PCT = 0.70  # gives lead time to react before ElevenLabs starts hard-rejecting
 
 
@@ -56,12 +98,16 @@ def check_char_quota(ym: str | None = None) -> CharQuotaStatus:
     (skip + alert rather than silently flagging videos `needs_revoice` past the wall).
     """
     ym = ym or current_ym()
-    used = month_chars_used(ym)
-    pct = used / CREATOR_TIER_MONTHLY_CHAR_QUOTA
+    live = _live_subscription()
+    if live is not None:
+        used, quota = live  # số thật từ ElevenLabs (đúng cái dashboard hiển thị)
+    else:
+        used, quota = month_chars_used(ym), monthly_quota()  # fallback: sổ nội bộ
+    pct = used / quota
     status = CharQuotaStatus(
         ym=ym,
         chars_used=used,
-        quota=CREATOR_TIER_MONTHLY_CHAR_QUOTA,
+        quota=quota,
         pct_used=pct,
         alert=pct >= ALERT_THRESHOLD_PCT,
         exhausted=pct >= 1.0,
@@ -69,11 +115,11 @@ def check_char_quota(ym: str | None = None) -> CharQuotaStatus:
     if status.exhausted:
         log.error(
             "ElevenLabs monthly char quota EXHAUSTED: %d/%d chars (%.0f%%) for %s",
-            used, CREATOR_TIER_MONTHLY_CHAR_QUOTA, pct * 100, ym,
+            used, quota, pct * 100, ym,
         )
     elif status.alert:
         log.warning(
             "ElevenLabs monthly char quota at %.0f%%: %d/%d chars for %s",
-            pct * 100, used, CREATOR_TIER_MONTHLY_CHAR_QUOTA, ym,
+            pct * 100, used, quota, ym,
         )
     return status

@@ -129,6 +129,7 @@ def test_checkpoint_invalidate_is_noop_when_nothing_to_drop(tmp_path, monkeypatc
 def test_month_chars_used_sums_only_elevenlabs_current_month(tmp_path, monkeypatch):
     Session = _make_session_factory(tmp_path)
     monkeypatch.setattr(char_guard, "SessionLocal", Session)
+    monkeypatch.setattr(char_guard, "_live_subscription", lambda: None)  # test ledger path, không HTTP
     with Session() as s:
         s.add_all([
             CostLedger(step="tts_elevenlabs", provider="elevenlabs", units=1000, estimated_cost=0.3, ym="2026-07"),
@@ -144,6 +145,10 @@ def test_month_chars_used_sums_only_elevenlabs_current_month(tmp_path, monkeypat
 def test_check_char_quota_alert_fires_at_70_pct_boundary(tmp_path, monkeypatch):
     Session = _make_session_factory(tmp_path)
     monkeypatch.setattr(char_guard, "SessionLocal", Session)
+    monkeypatch.setattr(char_guard, "_live_subscription", lambda: None)  # test ledger path, không HTTP
+    # neo quota về hằng mặc định — máy operator có thể override qua .env
+    monkeypatch.setattr(char_guard.settings, "ELEVENLABS_MONTHLY_CHAR_QUOTA",
+                        char_guard.CREATOR_TIER_MONTHLY_CHAR_QUOTA)
     with Session() as s:
         s.add(CostLedger(
             step="x", provider="elevenlabs",
@@ -160,6 +165,10 @@ def test_check_char_quota_alert_fires_at_70_pct_boundary(tmp_path, monkeypatch):
 def test_check_char_quota_no_alert_just_under_70_pct(tmp_path, monkeypatch):
     Session = _make_session_factory(tmp_path)
     monkeypatch.setattr(char_guard, "SessionLocal", Session)
+    monkeypatch.setattr(char_guard, "_live_subscription", lambda: None)  # test ledger path, không HTTP
+    # neo quota về hằng mặc định — máy operator có thể override qua .env
+    monkeypatch.setattr(char_guard.settings, "ELEVENLABS_MONTHLY_CHAR_QUOTA",
+                        char_guard.CREATOR_TIER_MONTHLY_CHAR_QUOTA)
     with Session() as s:
         s.add(CostLedger(
             step="x", provider="elevenlabs",
@@ -174,6 +183,7 @@ def test_check_char_quota_no_alert_just_under_70_pct(tmp_path, monkeypatch):
 def test_check_char_quota_exhausted_at_100_pct(tmp_path, monkeypatch):
     Session = _make_session_factory(tmp_path)
     monkeypatch.setattr(char_guard, "SessionLocal", Session)
+    monkeypatch.setattr(char_guard, "_live_subscription", lambda: None)  # test ledger path, không HTTP
     with Session() as s:
         s.add(CostLedger(
             step="x", provider="elevenlabs",
@@ -580,3 +590,20 @@ def test_synthesize_elevenlabs_enters_raw_response_context_manager(tmp_path, mon
     )
     assert out.read_bytes() == b"AUDIOBYTES"  # streamed from r.data inside the context manager
     assert rid == "rid-xyz"                    # request-id read from r._response.headers
+
+
+def test_check_char_quota_prefers_live_subscription_over_ledger(tmp_path, monkeypatch):
+    """Số thật từ ElevenLabs (đúng dashboard) thắng sổ nội bộ — ledger đếm theo lần thử
+    (kể cả lần rơi xuống edge-tts) nên overstate; chỉ còn là fallback khi offline."""
+    Session = _make_session_factory(tmp_path)
+    monkeypatch.setattr(char_guard, "SessionLocal", Session)
+    with Session() as s:  # ledger nói 99k (sắp cháy) — nhưng số thật chỉ 32k/40k
+        s.add(CostLedger(step="x", provider="elevenlabs", units=99_000,
+                         estimated_cost=0.0, ym="2026-07"))
+        s.commit()
+    monkeypatch.setattr(char_guard, "_live_subscription", lambda: (32_272, 40_000))
+
+    status = char_guard.check_char_quota("2026-07")
+    assert (status.chars_used, status.quota) == (32_272, 40_000)
+    assert status.exhausted is False
+    assert status.alert is True  # 80.7% >= ngưỡng 70%
