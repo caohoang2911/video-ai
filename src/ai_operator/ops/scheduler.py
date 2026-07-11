@@ -48,21 +48,28 @@ def produce_skip_reason() -> str | None:
 
 
 def publish_skip_reason() -> str | None:
-    """None = ok to publish; else why to skip. Publishing an already-voiced video spends NO
-    ElevenLabs chars, so publish is deliberately NOT char-gated -- gating it would idle the
-    approved backlog at month-end for no saving. Only the weekly cadence cap applies here."""
+    """None = ok to publish a MAIN video; else why mains are throttled. Publishing an
+    already-voiced video spends NO ElevenLabs chars, so publish is deliberately NOT
+    char-gated -- gating it would idle the approved backlog at month-end for no saving.
+    The weekly cadence cap governs MAIN videos only — shorts publish freely, so
+    publish_job keeps scanning for approved shorts even when this returns a reason."""
     if not quota_throttle.throttle_ok():
         return f"weekly cadence cap reached ({quota_throttle.uploads_last_7_days()}/{settings.WEEKLY_VIDEO_CAP} in 7d)"
     return None
 
 
-def _next_approved_video_id() -> int | None:
+def _next_approved_video_id(*, include_main: bool = True) -> int | None:
+    """Oldest approved video ready to upload; `include_main=False` restricts the scan
+    to shorts (used while the weekly cadence cap has mains throttled)."""
     with SessionLocal() as s:
-        v = s.scalar(
+        stmt = (
             select(Video)
             .where(Video.state == VideoState.APPROVED.value, Video.needs_revoice.is_(False))
             .order_by(Video.id)
         )
+        if not include_main:
+            stmt = stmt.where(Video.kind == "short")
+        v = s.scalar(stmt)
         return v.id if v else None
 
 
@@ -81,9 +88,9 @@ def produce_job() -> None:
 def publish_job(now: datetime | None = None) -> None:
     reason = publish_skip_reason()
     if reason:
-        log.info("publish skipped — %s", reason)  # routine cadence throttle, not an alert
-        return
-    video_id = _next_approved_video_id()
+        # cadence throttle chỉ chặn video chính — shorts vẫn được quét và đăng
+        log.info("main publish throttled — %s (shorts still eligible)", reason)
+    video_id = _next_approved_video_id(include_main=reason is None)
     if video_id is None:
         log.info("publish: no approved video ready")
         return

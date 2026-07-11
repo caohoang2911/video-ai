@@ -92,9 +92,28 @@ def test_produce_job_does_not_produce_when_exhausted(monkeypatch):
     assert called == []  # skipped: never entered production
 
 
-def test_publish_job_does_not_publish_when_exhausted(monkeypatch):
-    monkeypatch.setattr(scheduler, "publish_skip_reason", lambda: "quota exhausted")
+def test_publish_job_scans_only_shorts_when_mains_throttled(monkeypatch):
+    # cadence cap hit -> mains are off the table, but the scan MUST still run for shorts
+    monkeypatch.setattr(scheduler, "publish_skip_reason", lambda: "cadence cap reached")
+    scanned = []
+    monkeypatch.setattr(
+        scheduler, "_next_approved_video_id",
+        lambda *, include_main=True: (scanned.append(include_main), None)[1],
+    )
     published = []
     monkeypatch.setattr(scheduler, "publish", lambda *a, **k: published.append(True))
     scheduler.publish_job()
-    assert published == []
+    assert scanned == [False]  # throttled -> shorts-only scan
+    assert published == []     # no approved short available -> nothing goes out
+
+
+def test_publish_job_publishes_short_while_mains_throttled(monkeypatch):
+    monkeypatch.setattr(scheduler, "publish_skip_reason", lambda: "cadence cap reached")
+    monkeypatch.setattr(scheduler, "_next_approved_video_id", lambda *, include_main=True: 42)
+    published = []
+    monkeypatch.setattr(
+        scheduler, "publish",
+        lambda vid, publish_at_iso=None: (published.append(vid), "yt-id")[1],
+    )
+    scheduler.publish_job()
+    assert published == [42]  # short rides past the weekly cap

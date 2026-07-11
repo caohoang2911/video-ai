@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from ..config import settings
 from ..constants import YT_COST_INSERT, YT_COST_THUMBNAIL, YT_QUOTA_ALERT_BELOW, YT_QUOTA_DAILY
 from ..db.engine import SessionLocal
-from ..db.models import Upload
+from ..db.models import Upload, Video
 from ..db.models_ops import AppState
 from ..logging_setup import get_logger
 
@@ -39,18 +39,25 @@ def _pt_today() -> str:
 
 
 def uploads_last_7_days() -> int:
-    """Count uploads with a confirmed youtube_video_id in the trailing 7 days."""
+    """Count MAIN-video uploads with a confirmed youtube_video_id in the trailing 7 days.
+    Shorts are excluded: the weekly cadence cap governs long-form only — shorts ride along
+    with their parent and publish freely."""
     since = datetime.now(timezone.utc) - timedelta(days=7)
     with SessionLocal() as s:
         return s.scalar(
             select(func.count())
             .select_from(Upload)
-            .where(Upload.created_at >= since, Upload.youtube_video_id.is_not(None))
+            .join(Video, Video.id == Upload.video_id)
+            .where(
+                Upload.created_at >= since,
+                Upload.youtube_video_id.is_not(None),
+                Video.kind == "main",
+            )
         ) or 0
 
 
 def throttle_ok() -> bool:
-    """True if another upload fits within the WEEKLY_VIDEO_CAP/7-day cadence."""
+    """True if another MAIN upload fits within the WEEKLY_VIDEO_CAP/7-day cadence."""
     return uploads_last_7_days() < settings.WEEKLY_VIDEO_CAP
 
 
@@ -104,9 +111,10 @@ def reserve_thumbnail() -> int:
     return reserve(YT_COST_THUMBNAIL)
 
 
-def ensure_can_publish() -> None:
-    """Raise if either the weekly cadence cap or the daily quota is exhausted."""
-    if not throttle_ok():
+def ensure_can_publish(kind: str = "main") -> None:
+    """Raise if the daily quota is exhausted, or — for MAIN videos only — the weekly
+    cadence cap is reached. Shorts skip the cadence cap but still spend quota units."""
+    if kind == "main" and not throttle_ok():
         raise ThrottleExceeded(
             f"weekly cap reached ({settings.WEEKLY_VIDEO_CAP}/7d) — publish later"
         )
