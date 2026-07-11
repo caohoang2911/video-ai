@@ -63,15 +63,20 @@ def generate_shorts(parent_video_id: int, *, force: bool = False) -> list[int]:
     # Offset keeps idempotency keys unique across re-rolls that kept published shorts.
     offset = _next_index(parent_video_id)
     child_ids: list[int] = []
+    batch_used: set[int] = set()  # parent images taken so far — keeps siblings visually distinct
     for i, short in enumerate(shorts):
         try:
-            child_ids.append(_produce_one(parent_video_id, parent_script, offset + i, short))
+            child_ids.append(
+                _produce_one(parent_video_id, parent_script, offset + i, short, batch_used)
+            )
         except Exception as exc:  # noqa: BLE001 - one bad short must not abort the others
             log.error("short %s/%s for parent %s failed: %s", i + 1, len(shorts), parent_video_id, exc)
     return child_ids
 
 
-def _produce_one(parent_id: int, parent_script: dict, index: int, short) -> int:
+def _produce_one(
+    parent_id: int, parent_script: dict, index: int, short, batch_used: set[int] | None = None
+) -> int:
     child_id = _create_child(parent_id, index, short)
     child_dir = OUTPUT_DIR / str(child_id)
     child_dir.mkdir(parents=True, exist_ok=True)
@@ -94,7 +99,7 @@ def _produce_one(parent_id: int, parent_script: dict, index: int, short) -> int:
             s.commit()
         _advance(child_id, VideoState.VOICED)
 
-        _reuse_parent_images(parent_id, parent_script, child_id, short)
+        _reuse_parent_images(parent_id, parent_script, child_id, short, batch_used)
         build_short(child_id)  # -> rendered
 
         if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID:
@@ -178,14 +183,23 @@ def _discard_unpublished(children: list[Video]) -> None:
         log.info("discarded unpublished short %s (state=%s)", child.id, state)
 
 
-def _reuse_parent_images(parent_id: int, parent_script: dict, child_id: int, short) -> None:
+def _reuse_parent_images(
+    parent_id: int, parent_script: dict, child_id: int, short,
+    batch_used: set[int] | None = None,
+) -> None:
     """Map each short beat onto the best keyword-matching parent beat image; copy it into
-    the child's img/ dir under the beat_XX.jpg name build_short expects."""
+    the child's img/ dir under the beat_XX.jpg name build_short expects.
+
+    `batch_used` carries beat_ids already taken by SIBLING shorts in the same batch —
+    without it the popular images repeat across the 2-3 shorts and the batch looks like
+    duplicates in the feed. Preference order: unused anywhere > unused in this short >
+    keyword overlap."""
     parent_img = OUTPUT_DIR / str(parent_id) / "img"
     child_img = OUTPUT_DIR / str(child_id) / "img"
     child_img.mkdir(parents=True, exist_ok=True)
 
     parent_beats = parent_script.get("shot_list", [])
+    batch_used = batch_used if batch_used is not None else set()
     used: set[int] = set()
     for i, beat in enumerate(short.beats):
         want = {w.lower() for kw in beat.keywords for w in kw.split()}
@@ -195,10 +209,11 @@ def _reuse_parent_images(parent_id: int, parent_script: dict, child_id: int, sho
                 for pb in parent_beats
                 if (parent_img / f"beat_{pb['beat_id']:02d}.jpg").exists()
             ),
-            key=lambda t: (t[1] in used, -t[0]),  # prefer unused, then best overlap
+            key=lambda t: (t[1] in used, t[1] in batch_used, -t[0]),
         )
         if not scored:
             raise FileNotFoundError(f"parent {parent_id} has no beat images to reuse")
         beat_id = scored[0][1]
         used.add(beat_id)
+        batch_used.add(beat_id)
         shutil.copyfile(parent_img / f"beat_{beat_id:02d}.jpg", child_img / f"beat_{i + 1:02d}.jpg")

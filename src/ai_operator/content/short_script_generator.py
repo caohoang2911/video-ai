@@ -44,8 +44,11 @@ Rules for EVERY short (the curiosity-gap contract):
    'imagine', no 'what if I told you').
 7. `title`: must anchor a SEARCHABLE ENTITY (ship/place/event name or year) AND a concrete
    stake or number — never a generic label. "The Neighborhood That Vanished" is WEAK;
-   "Little Germany: Erased by One Afternoon in 1904" or "1,000 Children, One Boat: Why
-   Little Germany Left Manhattan" is the bar. <=80 chars.
+   "Little Germany: Erased by One Afternoon in 1904" is the bar. <=80 chars.
+   ACROSS THE BATCH: every title must OPEN with different words — feeds truncate to ~30
+   chars, so identical prefixes make the batch look like duplicates. Put the unique hook
+   phrase FIRST and the entity/year anchor after a dash: "The Life Vests That Crumbled
+   to Dust — General Slocum, 1904". Never start two shorts with the same entity prefix.
 8. `text_overlay`: <=6 words, an information gap the viewer must resolve, strongest word
    first (Shorts autoplay muted — this line does the hook's job). "1,000 kids. One boat."
    beats "The neighborhood didn't fade."
