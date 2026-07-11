@@ -21,11 +21,25 @@
       <td>{{ t.id }}</td>
       <td>{{ t.title }}</td>
       <td class="muted small">{{ t.angle or '—' }}</td>
-      <td><span class="pill">{{ t.status }}</span></td>
       <td>
-        <form method="post" action="/topics/{{ t.id }}/produce">
-          <button type="submit">sản xuất</button>
-        </form>
+        {% if t.status == 'backlog' %}<span class="pill pending">chờ sản xuất</span>
+        {% elif t.status == 'used' %}<span class="pill done">đã sản xuất</span>
+        {% elif t.status == 'rejected' %}<span class="pill failed">bị loại</span>
+        {% else %}<span class="pill">{{ t.status }}</span>{% endif %}
+      </td>
+      <td>
+        {% if t.videos %}
+          {# đã có video từ chủ đề này → link tới video + bước pipeline hiện tại #}
+          {% for v in t.videos %}
+            <a href="/videos/{{ v.id }}">#{{ v.id }}</a> <span class="pill">{{ v.state }}</span>{{ ' ' }}
+          {% endfor %}
+        {% elif t.status == 'backlog' %}
+          <form method="post" action="/topics/{{ t.id }}/produce">
+            <button type="submit">sản xuất</button>
+          </form>
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
       </td>
     </tr>
   {% else %}

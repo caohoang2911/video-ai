@@ -8,7 +8,7 @@
 
   {% if running %}
   <section class="card ok">
-    <h3>▶ Đang chạy ({{ running | length }})</h3>
+    <h3>Đang chạy ({{ running | length }})</h3>
     {% for j in running %}
     <p>
       <span class="pill running">{{ j.command }}</span>
@@ -34,8 +34,8 @@
         <td>{% if j.video_id %}<a href="/videos/{{ j.video_id }}">#{{ j.video_id }}</a>{% else %}—{% endif %}</td>
         <td>{{ j.topic_id or '—' }}</td>
         <td class="muted small">{{ j.created_at }}</td>
-        <td class="muted small">{% if j.status == 'running' %}⏱ {{ j.elapsed }}{% else %}{{ j.finished_at or '—' }}{% endif %}</td>
-        <td class="bad small">{{ j.error or '' }}</td>
+        <td class="muted small">{% if j.status == 'running' %}{{ j.elapsed }}{% else %}{{ j.finished_at or '—' }}{% endif %}</td>
+        <td class="bad small wrap">{{ j.error or '' }}</td>
       </tr>
     {% else %}
       <tr><td colspan="8" class="muted">Chưa có job.</td></tr>

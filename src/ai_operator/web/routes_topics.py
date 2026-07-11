@@ -8,7 +8,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from sqlalchemy import select
 
 from ..db.engine import SessionLocal
-from ..db.models import Topic
+from ..db.models import Topic, Video
 from .job_queue import enqueue
 from .rendering import action_result, iso, render
 
@@ -21,10 +21,25 @@ def list_topics(request: Request, status: str | None = None):
     if status:
         stmt = stmt.where(Topic.status == status)
     with SessionLocal() as s:
+        rows = s.scalars(stmt).all()
+        # Production status per topic: the main video(s) built from it and their pipeline
+        # state, so the list shows "produced → where" instead of a bare used/backlog pill.
+        topic_ids = [t.id for t in rows]
+        videos_by_topic: dict[int, list[dict]] = {}
+        if topic_ids:
+            for v in s.scalars(
+                select(Video)
+                .where(Video.topic_id.in_(topic_ids), Video.kind == "main",
+                       Video.state != "rejected")  # scrapped attempts don't count as produced
+                .order_by(Video.id)
+            ).all():
+                videos_by_topic.setdefault(v.topic_id, []).append(
+                    {"id": v.id, "state": v.state}
+                )
         topics = [
             {"id": t.id, "title": t.title, "angle": t.angle, "status": t.status,
-             "created_at": iso(t.created_at)}
-            for t in s.scalars(stmt).all()
+             "videos": videos_by_topic.get(t.id, []), "created_at": iso(t.created_at)}
+            for t in rows
         ]
     return render(request, "topics.html", {"topics": topics, "status": status})
 

@@ -72,8 +72,29 @@ def list_videos(request: Request, state: str | None = None, kind: str | None = N
     with SessionLocal() as s:
         videos = [_video_row(v) for v in s.scalars(stmt).all()]
         states = [st for (st,) in s.execute(select(Video.state).distinct()).all()]
+        # Group rows into families for the tree view: each main followed by its shorts.
+        # `videos` stays flat (JSON API contract); `families` drives the HTML table.
+        shorts_by_parent: dict[int | None, list[dict]] = {}
+        for row in videos:
+            if row["kind"] == "short":
+                shorts_by_parent.setdefault(row["parent_id"], []).append(row)
+        families = [
+            {"main": row, "stub": None,
+             "shorts": sorted(shorts_by_parent.pop(row["id"], []), key=lambda r: r["id"])}
+            for row in videos if row["kind"] != "short"
+        ]
+        # Shorts whose parent fell outside the current filter (or is gone): keep them
+        # visible under a muted context stub instead of silently dropping them.
+        for pid, kids in shorts_by_parent.items():
+            parent = s.get(Video, pid) if pid is not None else None
+            stub = None if parent is None else {
+                "id": parent.id, "title": parent.title, "state": parent.state,
+            }
+            families.append({"main": None, "stub": stub,
+                             "shorts": sorted(kids, key=lambda r: r["id"])})
     return render(request, "videos.html", {
-        "videos": videos, "state": state, "states": sorted(states), "kind": kind,
+        "videos": videos, "families": families,
+        "state": state, "states": sorted(states), "kind": kind,
     })
 
 

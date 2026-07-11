@@ -31,6 +31,16 @@ _ROUTERS = (
 def create_app(output_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title="AI Operator Control Panel", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
+    @app.middleware("http")
+    async def no_store(request, call_next):
+        # Live operational data: forbid browser/proxy caching of pages, API responses AND
+        # static css/js (tiny files; a stale stylesheet against new markup shatters the layout).
+        # Only /media (large render artifacts, immutable per video) keeps default caching.
+        response = await call_next(request)
+        if not request.url.path.startswith("/media"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

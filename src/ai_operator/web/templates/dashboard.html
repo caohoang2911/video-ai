@@ -12,26 +12,68 @@
 </section>
 
 {% set h = health %}
-<section class="grid">
+{% set nc = nav_counts | default({}) %}
+<section class="grid stats">
   <div class="card">
-    <h3>Số video theo trạng thái</h3>
-    <ul class="kv">{% for st, n in h.states.items() %}<li>{{ st }}<span>{{ n }}</span></li>{% endfor %}</ul>
+    <h3>Ngân sách còn lại ({{ h.budget.ym }})</h3>
+    <p class="big">${{ h.budget.remaining }}</p>
+    <p class="muted small">đã dùng ${{ h.budget.spent }} / ${{ h.budget.monthly_budget }}</p>
   </div>
   <div class="card">
-    <h3>Ngân sách ({{ h.budget.ym }})</h3>
-    <p class="big">${{ h.budget.spent }} <span class="muted">/ ${{ h.budget.monthly_budget }}</span></p>
-    <p class="muted">còn lại ${{ h.budget.remaining }}</p>
-  </div>
-  <div class="card">
-    <h3>Ký tự ElevenLabs đã dùng</h3>
+    <h3>Ký tự ElevenLabs</h3>
     <p class="big">{{ h.char_quota.pct_used }}%</p>
-    <p class="muted">{{ h.char_quota.used }} / {{ h.char_quota.quota }}
+    <p class="muted small">{{ h.char_quota.used }} / {{ h.char_quota.quota }}
       {% if h.char_quota.exhausted %}<b class="bad">HẾT HẠN MỨC</b>{% elif h.char_quota.alert %}<b class="warn">SẮP HẾT</b>{% endif %}</p>
   </div>
   <div class="card">
-    <h3>Hạn mức YouTube (hôm nay)</h3>
+    <h3>Hạn mức YouTube</h3>
     <p class="big">{{ h.yt_quota.remaining }}</p>
-    <p class="muted">đã dùng {{ h.yt_quota.used_today }}</p>
+    <p class="muted small">đã dùng hôm nay {{ h.yt_quota.used_today }}</p>
+  </div>
+  <div class="card">
+    <h3>Video chờ duyệt</h3>
+    <p class="big {{ 'warn' if nc.review }}">{{ nc.review or 0 }}</p>
+    <p class="muted small"><a href="/videos?state=rendered">xem danh sách</a></p>
+  </div>
+  <div class="card">
+    <h3>Việc đang chờ</h3>
+    <p class="big">{{ nc.jobs or 0 }}</p>
+    <p class="muted small"><a href="/jobs">hàng đợi</a></p>
+  </div>
+  <div class="card">
+    <h3>Đăng gần nhất</h3>
+    <p class="big" style="font-size:1.05rem">{{ (h.last_publish or '—').replace('T', ' ')[:16] }}</p>
+    <p class="muted small">output/: {{ (h.disk.total_bytes / 1048576) | round(1) }} MiB</p>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Pipeline sản xuất</h3>
+  {% set flow = ['draft', 'scripted', 'voiced', 'rendered', 'pending_review', 'policy_ok', 'approved', 'published'] %}
+  <div class="stepper">
+    {% for st in flow %}
+    <a class="step state-{{ st }}" href="/videos?state={{ st }}" title="lọc video ở bước {{ st }}">
+      <span class="count">{{ h.states.get(st, 0) }}</span>
+      <span class="lbl">{{ st }}</span>
+    </a>
+    {% if not loop.last %}<span class="step-sep">›</span>{% endif %}
+    {% endfor %}
+  </div>
+  {% set side = h.states.items() | rejectattr('0', 'in', flow) | list %}
+  {% if side %}
+  <p class="small" style="margin-top:.6rem">
+    <span class="muted">ngoài luồng:</span>
+    {% for st, n in side %}
+    <a href="/videos?state={{ st }}"><span class="pill state-{{ st }}">{{ st }} · {{ n }}</span></a>
+    {% endfor %}
+  </p>
+  {% endif %}
+</section>
+
+<section class="grid">
+  <div class="card">
+    <h3>Xu hướng lượt xem kênh</h3>
+    {{ views_svg | safe }}
   </div>
   <div class="card">
     <h3>Hiệu quả video</h3>
@@ -40,16 +82,6 @@
     {% if channel %}<p class="muted">{{ '{:,}'.format(channel.subscribers) }} người đăng ký ·
       {{ '{:,}'.format(channel.total_views) }} tổng lượt xem</p>{% endif %}
   </div>
-  <div class="card">
-    <h3>Đăng gần nhất</h3>
-    <p class="muted">{{ h.last_publish or '(chưa có)' }}</p>
-    <p class="muted">dung lượng output/: {{ (h.disk.total_bytes / 1048576) | round(1) }} MiB</p>
-  </div>
-</section>
-
-<section class="card">
-  <h3>Xu hướng lượt xem kênh</h3>
-  {{ views_svg | safe }}
 </section>
 
 <section class="card">

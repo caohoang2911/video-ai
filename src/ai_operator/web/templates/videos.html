@@ -23,18 +23,41 @@
 <table>
   <thead><tr><th>ID</th><th>Loại</th><th>Trạng thái</th><th>Tiêu đề</th><th>Thời lượng (giây)</th><th>Cần lồng tiếng lại?</th><th>Cập nhật lúc</th></tr></thead>
   <tbody>
-  {% for v in videos %}
-    <tr>
+  {% for fam in families %}
+    {% if fam.main %}
+    <tr class="tree-main">
+      <td><a href="/videos/{{ fam.main.id }}">#{{ fam.main.id }}</a></td>
+      <td><span class="pill">chính</span>{% if fam.shorts %} <span class="pill small">{{ fam.shorts | length }} shorts</span>{% endif %}</td>
+      <td><span class="pill state-{{ fam.main.state }}">{{ fam.main.state }}</span></td>
+      <td>{{ fam.main.title or '—' }}</td>
+      <td>{{ fam.main.duration_sec or '—' }}</td>
+      <td>{{ 'có' if fam.main.needs_revoice else '' }}</td>
+      <td class="muted">{{ fam.main.updated_at }}</td>
+    </tr>
+    {% elif fam.stub %}
+    {# parent nằm ngoài bộ lọc hiện tại — hiển thị mờ để giữ ngữ cảnh cho shorts bên dưới #}
+    <tr class="tree-main muted">
+      <td><a href="/videos/{{ fam.stub.id }}">#{{ fam.stub.id }}</a></td>
+      <td><span class="pill">chính</span></td>
+      <td><span class="pill state-{{ fam.stub.state }}">{{ fam.stub.state }}</span></td>
+      <td>{{ fam.stub.title or '—' }} <span class="small">(ngoài bộ lọc)</span></td>
+      <td colspan="3"></td>
+    </tr>
+    {% endif %}
+    {% for v in fam.shorts %}
+    <tr class="tree-short">
       <td><a href="/videos/{{ v.id }}">#{{ v.id }}</a></td>
-      <td>{% if v.kind == 'short' %}<span class="pill">short ↦ <a href="/videos/{{ v.parent_id }}">#{{ v.parent_id }}</a></span>{% else %}<span class="pill">chính</span>{% endif %}</td>
-      <td><span class="pill">{{ v.state }}</span></td>
+      <td><span class="pill">↳ short</span></td>
+      <td><span class="pill state-{{ v.state }}">{{ v.state }}</span></td>
       <td>{{ v.title or '—' }}</td>
       <td>{{ v.duration_sec or '—' }}</td>
       <td>{{ 'có' if v.needs_revoice else '' }}</td>
       <td class="muted">{{ v.updated_at }}</td>
     </tr>
+    {% endfor %}
   {% else %}
-    <tr><td colspan="7" class="muted">Chưa có video.</td></tr>
+    <tr><td colspan="7" class="muted">Chưa có video{% if state or kind %} khớp bộ lọc{% endif %} —
+      <a href="/topics">sang Chủ đề để sản xuất →</a></td></tr>
   {% endfor %}
   </tbody>
 </table>

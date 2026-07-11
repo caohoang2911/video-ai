@@ -6,14 +6,14 @@
 
 <div class="row-between">
   <h1>Thống kê</h1>
-  <form method="post" action="/analytics/refresh"><button type="submit">↻ Kéo từ YouTube ngay</button></form>
+  <form method="post" action="/analytics/refresh"><button type="submit">Kéo từ YouTube ngay</button></form>
 </div>
 <p class="muted">
   Cập nhật gần nhất: {{ freshness.last_pull or '(chưa kéo)' }}
   {% if freshness.channel_fetched_at %} · Tổng kênh: {{ freshness.channel_fetched_at }}{% endif %}
 </p>
 
-<section class="grid">
+<section class="grid stats">
   {% if channel %}
   <div class="card"><h3>Người đăng ký</h3><p class="big">{{ '{:,}'.format(channel.subscribers) }}</p></div>
   <div class="card"><h3>Tổng lượt xem kênh</h3><p class="big">{{ '{:,}'.format(channel.total_views) }}</p></div>

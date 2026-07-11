@@ -15,9 +15,28 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import func, select
+
+from ..db.engine import SessionLocal
+from ..db.models import Video
+from ..db.models_ops import Job
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+def _nav_counts() -> dict[str, int]:
+    """Sidebar badge counts: videos awaiting operator review + queued jobs.
+    Injected into HTML renders only — JSON API payloads stay untouched."""
+    with SessionLocal() as s:
+        review = s.scalar(
+            select(func.count()).select_from(Video)
+            .where(Video.state.in_(("rendered", "pending_review")))
+        ) or 0
+        jobs = s.scalar(
+            select(func.count()).select_from(Job).where(Job.status == "pending")
+        ) or 0
+    return {"review": int(review), "jobs": int(jobs)}
 
 
 def wants_json(request: Request) -> bool:
@@ -37,7 +56,11 @@ def render(
     """Render `context` as JSON or via `template_name` depending on the request."""
     if wants_json(request):
         return JSONResponse(context, status_code=status_code)
-    return templates.TemplateResponse(request, template_name, context, status_code=status_code)
+    return templates.TemplateResponse(
+        request, template_name,
+        {**context, "nav_counts": _nav_counts()},  # sidebar badges, HTML-only
+        status_code=status_code,
+    )
 
 
 def action_result(
