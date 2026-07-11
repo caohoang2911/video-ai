@@ -1,20 +1,20 @@
 """Ops routes: cost ledger (grouped by month+provider), analytics snapshots, and the job
-queue. All read-only views over the shared DB."""
+queue (read views + scheduler process start/stop)."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from .. import checkpoint
 from ..db.engine import SessionLocal
 from ..db.models import Video
 from ..db.models_ops import CostLedger, Job
-from . import analytics_view
+from . import analytics_view, scheduler_control
 from .charts import views_sparkline
-from .rendering import iso, render
+from .rendering import action_result, iso, render
 
 router = APIRouter()
 
@@ -83,4 +83,36 @@ def jobs(request: Request):
                 "video_state": state, "last_step": step,
             })
     running = [j for j in jobs_out if j["status"] == "running"]
-    return render(request, "jobs.html", {"jobs": jobs_out, "running": running})
+    return render(request, "jobs.html", {
+        "jobs": jobs_out, "running": running,
+        "scheduler_running": scheduler_control.is_running(),
+    })
+
+
+@router.post("/jobs/{job_id}/cancel")
+def job_cancel(request: Request, job_id: int):
+    """Huỷ một job còn PENDING. Guarded UPDATE (id + status) nên không có race với worker:
+    job đã bị claim (running) thì rowcount = 0 và không bị đụng vào."""
+    with SessionLocal() as s:
+        res = s.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status == "pending")
+            .values(status="cancelled", error="cancelled by operator",
+                    finished_at=datetime.now(timezone.utc))
+        )
+        s.commit()
+        cancelled = res.rowcount == 1
+    return action_result(request, {
+        "ok": cancelled, "id": job_id,
+        "note": None if cancelled else "job không còn pending (đã chạy/xong) — không huỷ được",
+    }, "/jobs")
+
+
+@router.post("/jobs/scheduler/start")
+def scheduler_start(request: Request):
+    return action_result(request, scheduler_control.start(), "/jobs")
+
+
+@router.post("/jobs/scheduler/stop")
+def scheduler_stop(request: Request):
+    return action_result(request, scheduler_control.stop(), "/jobs")

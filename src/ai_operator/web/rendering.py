@@ -25,9 +25,11 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
-def _nav_counts() -> dict[str, int]:
-    """Sidebar badge counts: videos awaiting operator review + queued jobs.
+def _nav_counts() -> dict:
+    """Sidebar context: videos awaiting operator review, queued jobs, scheduler liveness.
     Injected into HTML renders only — JSON API payloads stay untouched."""
+    from . import scheduler_control  # local import: keeps rendering importable without subprocess deps
+
     with SessionLocal() as s:
         review = s.scalar(
             select(func.count()).select_from(Video)
@@ -36,7 +38,7 @@ def _nav_counts() -> dict[str, int]:
         jobs = s.scalar(
             select(func.count()).select_from(Job).where(Job.status == "pending")
         ) or 0
-    return {"review": int(review), "jobs": int(jobs)}
+    return {"review": int(review), "jobs": int(jobs), "sched": scheduler_control.is_running()}
 
 
 def wants_json(request: Request) -> bool:

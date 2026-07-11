@@ -103,6 +103,7 @@ td button { padding: .3rem .7rem; font-size: .82rem; }         /* nút trong b�
 .pill.running   { background: #12305278; color: #8abfff; }
 .pill.failed    { background: #47201d78; color: #ffa19b; }
 .pill.pending   { background: #3d331b78; color: #ecd08a; }
+.pill.cancelled { background: #34282078; color: #d9b3a3; }
 /* video pipeline: nguội (nháp) → nóng (đã đăng). Màu khai báo qua biến --st-*
    để pill lẫn stepper dùng chung một bảng màu (DRY). */
 .state-draft, .state-scripted, .state-voiced { --st-bg: #262d3d; --st-fg: #aeb9cf; }
@@ -125,6 +126,22 @@ td button { padding: .3rem .7rem; font-size: .82rem; }         /* nút trong b�
 .step .count { font-size: 1.35rem; font-weight: 650; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .step .lbl { font-size: .66rem; text-transform: uppercase; letter-spacing: .05em; opacity: .9; white-space: nowrap; }
 .step-sep { align-self: center; color: var(--muted); user-select: none; }
+
+/* mini-stepper: tiến độ pipeline của MỘT video (trang chi tiết) */
+.mini-stepper { display: flex; gap: .3rem; flex-wrap: wrap; margin: .35rem 0 .55rem; }
+.mstep {
+  font-size: .67rem; text-transform: uppercase; letter-spacing: .04em;
+  padding: .13rem .5rem; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); opacity: .5;
+}
+.mstep.done { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); color: var(--ok); opacity: .85; }
+.mstep.done::after { content: " ✓"; }
+.mstep.now { background: var(--st-bg, var(--line)); color: var(--st-fg, var(--fg));
+             border-color: transparent; opacity: 1; font-weight: 600; }
+
+/* chấm trạng thái bộ lập lịch cạnh mục Hàng đợi: xanh = đang chạy, đỏ = tắt */
+.scheddot { width: 7px; height: 7px; border-radius: 50%; background: var(--bad); flex: none; }
+.scheddot.on { background: var(--ok); }
 
 /* ---------- key-value lists / progress bars ---------- */
 .kv { list-style: none; padding: 0; margin: 0; }
@@ -163,6 +180,15 @@ button[disabled] { opacity: .45; cursor: not-allowed; }
 :is(a, button, select, input, textarea, summary):focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
 }
+
+/* form 1 dòng trong toolbar (thắng rule `form label input` block/full-width) */
+.inline-form { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.inline-form label { display: flex; align-items: center; gap: .45rem; margin: 0;
+                     color: var(--muted); font-size: .86rem; white-space: nowrap; }
+.inline-form input, .inline-form select {
+  display: inline-block; width: auto; margin: 0; padding: .35rem .5rem;
+}
+.inline-form input[type="number"] { width: 4.5rem; text-align: center; }
 
 .filter { margin-bottom: 1rem; display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; }
 .filter label { color: var(--muted); font-size: .86rem; }

@@ -1,17 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Chủ đề{% endblock %}
 {% block content %}
-<h1>Chủ đề</h1>
-
-<section class="card">
-  <h3>Tạo chủ đề mới</h3>
-  <div class="btnrow">
-    <form method="post" action="/topics/gen-topics">
-      <label>Số lượng <input type="number" name="n" value="5" min="1" max="20" style="width:4rem"></label>
-      <button type="submit">Nạp sẵn + để AI gợi ý</button>
-    </form>
-  </div>
-</section>
+<div class="row-between">
+  <h1>Chủ đề</h1>
+  {# form gọn 1 dòng: nhãn + số lượng + nút, nằm cùng hàng với tiêu đề #}
+  <form method="post" action="/topics/gen-topics" class="inline-form">
+    <label>Số lượng <input type="number" name="n" value="5" min="1" max="20"></label>
+    <button type="submit">Nạp chủ đề AI gợi ý</button>
+  </form>
+</div>
 
 <table>
   <thead><tr><th>ID</th><th>Tiêu đề</th><th>Góc nhìn</th><th>Trạng thái</th><th>Sản xuất</th></tr></thead>

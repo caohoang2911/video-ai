@@ -9,9 +9,22 @@
     {% if video.kind == 'short' %} · short của <a href="/videos/{{ video.parent_id }}">#{{ video.parent_id }}</a>{% endif %}</p>
   <h1>Video #{{ video.id }} <span class="pill state-{{ video.state }}">{{ video.state }}</span>
     {% if video.kind == 'short' %}<span class="pill">SHORT</span>{% endif %}</h1>
+  {# tiến độ pipeline của RIÊNG video này: done → bước hiện tại (màu trạng thái) → còn lại #}
+  {% set flow = ['draft', 'scripted', 'voiced', 'rendered', 'policy_ok', 'approved', 'published'] %}
+  {% set cur = flow.index(video.state) if video.state in flow else (flow | length if video.state == 'analyzed' else -1) %}
+  <div class="mini-stepper">
+    {% for st in flow %}
+    <span class="mstep {{ 'done' if loop.index0 < cur else ('now state-' ~ st if loop.index0 == cur else 'todo') }}">{{ st }}</span>
+    {% endfor %}
+  </div>
   <p class="muted">chủ đề {{ video.topic_id or '—' }} · tạo {{ video.created_at }} · cập nhật {{ video.updated_at }}
     {% if last_step %} · bước xong gần nhất: <b>{{ last_step }}</b>{% endif %}
     {% if video.needs_revoice %} · <b class="warn">cần lồng tiếng lại</b>{% endif %}</p>
+  {% if last_job %}
+  <p class="small">job gần nhất: <span class="pill {{ last_job.status }}">{{ last_job.command }} · {{ last_job.status }}</span>
+    {% if last_job.finished_at %}<span class="muted">{{ last_job.finished_at }}</span>{% endif %}
+    {% if last_job.error %}<span class="bad">— {{ last_job.error }}</span>{% endif %}</p>
+  {% endif %}
 </div>
 
 <div class="detail-layout">
@@ -106,12 +119,23 @@
       <h3>Chạy lại một bước sản xuất</h3>
       <p class="muted small">Bấm để thêm việc vào hàng đợi; bộ lập lịch sẽ chạy.</p>
       <div class="btnrow">
-        {% for cmd in ['gen-audio', 'gen-visuals', 'revoice', 'assemble', 'publish'] %}
+        {% for cmd in ['gen-audio', 'gen-visuals', 'revoice', 'assemble'] %}
         <form method="post" action="/videos/{{ video.id }}/enqueue/{{ cmd }}">
           <button type="submit">{{ cmd }}</button>
         </form>
         {% endfor %}
+        {# publish chỉ hợp lệ khi đã duyệt xong — disable kèm lý do thay vì để bấm rồi fail #}
+        {% if video.state == 'approved' %}
+        <form method="post" action="/videos/{{ video.id }}/enqueue/publish">
+          <button type="submit">publish</button>
+        </form>
+        {% else %}
+        <button disabled title="chỉ đăng được khi đã duyệt xong (approved) — dùng panel Quyết định duyệt ở trên">publish</button>
+        {% endif %}
       </div>
+      {% if video.state != 'approved' %}
+      <p class="muted small">publish đang khoá: cần duyệt <b>PASS_POLICY</b> → <b>PASS_QUALITY</b> ở panel trên trước.</p>
+      {% endif %}
     </section>
 
     <section class="card">

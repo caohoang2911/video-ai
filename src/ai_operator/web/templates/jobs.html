@@ -4,6 +4,26 @@
 <h1>Hàng đợi công việc</h1>
 
 <div id="jobs-live" hx-get="/jobs" hx-trigger="every 3s" hx-select="#jobs-live" hx-swap="outerHTML">
+  <section class="card {{ 'ok' if scheduler_running else 'warn' }}">
+    <div class="row-between">
+      <p style="margin:0"><b>Bộ lập lịch:</b>
+        {% if scheduler_running %}<span class="pill done">đang chạy</span>
+          <span class="muted small">— rút hàng đợi ~20s/lần</span>
+        {% else %}<span class="pill failed">đang tắt</span>
+          <span class="muted small">— job xếp vào sẽ nằm chờ, không chạy</span>{% endif %}
+      </p>
+      {% if scheduler_running %}
+      <form method="post" action="/jobs/scheduler/stop"
+            onsubmit="return confirm('Tắt bộ lập lịch? Job đang chạy dở có thể bị ngắt.')">
+        <button type="submit" class="danger">Tắt bộ lập lịch</button>
+      </form>
+      {% else %}
+      <form method="post" action="/jobs/scheduler/start">
+        <button type="submit">Bật bộ lập lịch</button>
+      </form>
+      {% endif %}
+    </div>
+  </section>
   <p class="muted">Tự cập nhật mỗi 3 giây · bộ lập lịch chạy lần lượt các việc đang chờ (~20s/lần).</p>
 
   {% if running %}
@@ -24,7 +44,7 @@
   {% endif %}
 
   <table>
-    <thead><tr><th>ID</th><th>Việc</th><th>Trạng thái</th><th>Video</th><th>Chủ đề</th><th>Tạo lúc</th><th>Xong / Đang chạy</th><th>Lỗi</th></tr></thead>
+    <thead><tr><th>ID</th><th>Việc</th><th>Trạng thái</th><th>Video</th><th>Chủ đề</th><th>Tạo lúc</th><th>Xong / Đang chạy</th><th>Lỗi</th><th></th></tr></thead>
     <tbody>
     {% for j in jobs %}
       <tr>
@@ -36,9 +56,14 @@
         <td class="muted small">{{ j.created_at }}</td>
         <td class="muted small">{% if j.status == 'running' %}{{ j.elapsed }}{% else %}{{ j.finished_at or '—' }}{% endif %}</td>
         <td class="bad small wrap">{{ j.error or '' }}</td>
+        <td>{% if j.status == 'pending' %}
+          <form method="post" action="/jobs/{{ j.id }}/cancel">
+            <button type="submit" class="danger">huỷ</button>
+          </form>
+        {% endif %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="8" class="muted">Chưa có job.</td></tr>
+      <tr><td colspan="9" class="muted">Chưa có job.</td></tr>
     {% endfor %}
     </tbody>
   </table>

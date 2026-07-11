@@ -12,7 +12,7 @@ from .. import checkpoint
 from ..config import OUTPUT_DIR
 from ..db.engine import SessionLocal
 from ..db.models import Asset, Decision, Upload, Video
-from ..db.models_ops import CostLedger
+from ..db.models_ops import CostLedger, Job
 from ..db.state_machine import VideoState, can_transition
 from .rendering import iso, render
 
@@ -124,6 +124,12 @@ def video_detail(request: Request, video_id: int):
                 select(Decision).where(Decision.video_id == video_id).order_by(Decision.id)
             ).all()
         ]
+        # job gần nhất của video: chỉ ra lệnh nào vừa chạy/failed (trả lời "kẹt ở đâu")
+        last_job = s.scalar(select(Job).where(Job.video_id == video_id).order_by(Job.id.desc()))
+        last_job_row = None if last_job is None else {
+            "command": last_job.command, "status": last_job.status, "error": last_job.error,
+            "finished_at": iso(last_job.finished_at),
+        }
         upload = s.scalar(select(Upload).where(Upload.video_id == video_id).order_by(Upload.id.desc()))
         upload_row = None if upload is None else {
             "youtube_video_id": upload.youtube_video_id, "status": upload.status,
@@ -142,4 +148,5 @@ def video_detail(request: Request, video_id: int):
         "decisions": decisions, "upload": upload_row, "allowed_decisions": allowed,
         "shorts": shorts,  # children of a main; empty for a short
         "last_step": checkpoint.last_step(video_id),  # live pipeline position while rendering
+        "last_job": last_job_row,  # most recent queue command for this video (shows failures)
     })

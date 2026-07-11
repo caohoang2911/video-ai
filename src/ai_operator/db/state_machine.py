@@ -35,7 +35,12 @@ _TRANSITIONS: dict[VideoState, set[VideoState]] = {
     VideoState.DRAFT: {VideoState.SCRIPTED, VideoState.FAILED},
     VideoState.SCRIPTED: {VideoState.VOICED, VideoState.REJECTED, VideoState.FAILED},
     VideoState.VOICED: {VideoState.RENDERED, VideoState.FAILED},
-    VideoState.RENDERED: {VideoState.PENDING_REVIEW, VideoState.FAILED},
+    VideoState.RENDERED: {
+        # direct review from the web panel — the operator reviews in-place, no hand-off hop
+        VideoState.POLICY_OK, VideoState.REJECTED, VideoState.EDITING,
+        VideoState.PENDING_REVIEW,  # optional Telegram hand-off (secondary review path)
+        VideoState.FAILED,
+    },
     VideoState.PENDING_REVIEW: {
         VideoState.POLICY_OK, VideoState.REJECTED, VideoState.EDITING,
     },

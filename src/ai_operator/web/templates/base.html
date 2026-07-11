@@ -33,6 +33,8 @@
           <svg class="icon" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-topic"/></svg>Chủ đề</a>
         <a href="/jobs" class="{{ 'active' if path.startswith('/jobs') else '' }}">
           <svg class="icon" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-queue"/></svg>Hàng đợi
+          <span class="scheddot {{ 'on' if nc.sched else '' }}"
+                title="bộ lập lịch {{ 'đang chạy' if nc.sched else 'ĐANG TẮT — job sẽ không chạy' }}"></span>
           {% if nc.jobs %}<span class="navbadge" title="việc đang chờ">{{ nc.jobs }}</span>{% endif %}</a>
         <a href="/costs" class="{{ 'active' if path.startswith('/costs') else '' }}">
           <svg class="icon" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-cost"/></svg>Chi phí</a>

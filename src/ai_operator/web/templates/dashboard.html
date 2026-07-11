@@ -49,7 +49,7 @@
 
 <section class="card">
   <h3>Pipeline sản xuất</h3>
-  {% set flow = ['draft', 'scripted', 'voiced', 'rendered', 'pending_review', 'policy_ok', 'approved', 'published'] %}
+  {% set flow = ['draft', 'scripted', 'voiced', 'rendered', 'policy_ok', 'approved', 'published'] %}
   <div class="stepper">
     {% for st in flow %}
     <a class="step state-{{ st }}" href="/videos?state={{ st }}" title="lọc video ở bước {{ st }}">
