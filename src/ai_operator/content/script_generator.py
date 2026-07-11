@@ -173,6 +173,9 @@ def _persist(video_id: int, script: ScriptOutput) -> None:
         if video.state != VideoState.SCRIPTED.value:
             assert_transition(video.state, VideoState.SCRIPTED)
             video.state = VideoState.SCRIPTED.value
+        # A rework run (rejected -> scripted) starts a fresh attempt: the old rejection
+        # note belongs to the previous cut and would show as a phantom error in the panel.
+        video.reject_reason = None
         video.script_path = str(script_path)
         # `script` is the in-memory ScriptOutput here (attribute access is valid); every
         # consumer that instead loads script.json off disk sees plain dicts and uses opt["title"].
