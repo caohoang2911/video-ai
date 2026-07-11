@@ -1,0 +1,8 @@
+{# fragment htmx: độ phủ tư liệu Wikimedia Commons của một chủ đề (không extends base) #}
+{% if count >= 5 %}
+<span class="pill done" title="{{ count }} ảnh đạt chuẩn license + độ phân giải cho “{{ query }}”">✓ {{ count }} ảnh</span>
+{% elif count > 0 %}
+<span class="pill pending" title="ít tư liệu — phần thiếu sẽ do SDXL vẽ">{{ count }} ảnh</span>
+{% else %}
+<span class="muted small" title="không có tư liệu đạt chuẩn — video sẽ dùng SDXL/stock">không có</span>
+{% endif %}

@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from ..db.engine import SessionLocal
 from ..db.models import Topic, Video
+from ..media import stock_clients
 from .job_queue import enqueue
 from .rendering import action_result, iso, render
 
@@ -42,6 +43,23 @@ def list_topics(request: Request, status: str | None = None):
             for t in rows
         ]
     return render(request, "topics.html", {"topics": topics, "status": status})
+
+
+@router.get("/topics/{topic_id}/commons-coverage")
+def commons_coverage(request: Request, topic_id: int):
+    """Số ảnh tư liệu Wikimedia Commons đạt chuẩn (license + độ phân giải) cho một chủ đề.
+    Gọi async từng ô qua htmx — Commons rate-limit 1 req/s nên không chặn cả trang; kết quả
+    nằm trong HTTP cache 24h của stock_clients nên các lần xem sau trả về tức thì."""
+    with SessionLocal() as s:
+        topic = s.get(Topic, topic_id)
+        if topic is None:
+            raise HTTPException(status_code=404, detail=f"topic {topic_id} not found")
+        # phần trước dấu ':' là tên thực thể (tàu/sự kiện) — query sạch hơn cả tiêu đề dài
+        query = topic.title.split(":")[0].strip()
+    hits = stock_clients.search_wikimedia_commons(query)
+    return render(request, "topic_commons_coverage.html", {
+        "topic_id": topic_id, "query": query, "count": len(hits),
+    })
 
 
 @router.post("/topics/gen-topics")

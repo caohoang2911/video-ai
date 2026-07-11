@@ -11,13 +11,17 @@
 </div>
 
 <table>
-  <thead><tr><th>ID</th><th>Tiêu đề</th><th>Góc nhìn</th><th>Trạng thái</th><th>Sản xuất</th></tr></thead>
+  <thead><tr><th>ID</th><th>Tiêu đề</th><th>Góc nhìn</th><th>Tư liệu Commons</th><th>Trạng thái</th><th>Sản xuất</th></tr></thead>
   <tbody>
   {% for t in topics %}
     <tr>
       <td>{{ t.id }}</td>
       <td>{{ t.title }}</td>
       <td class="muted small">{{ t.angle or '—' }}</td>
+      {# độ phủ ảnh tư liệu thật: nạp async từng ô (Commons rate-limit 1 req/s) #}
+      <td hx-get="/topics/{{ t.id }}/commons-coverage" hx-trigger="load" hx-swap="innerHTML">
+        <span class="muted small">đang dò…</span>
+      </td>
       <td>
         {% if t.status == 'backlog' %}<span class="pill pending">chờ sản xuất</span>
         {% elif t.status == 'used' %}<span class="pill done">đã sản xuất</span>
@@ -40,7 +44,7 @@
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="5" class="muted">Chưa có chủ đề.</td></tr>
+    <tr><td colspan="6" class="muted">Chưa có chủ đề.</td></tr>
   {% endfor %}
   </tbody>
 </table>
