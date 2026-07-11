@@ -41,7 +41,7 @@ def generate(video_id: int) -> list[str]:
 
     video_dir = OUTPUT_DIR / str(video_id)
     overlays = _overlay_texts(video_dir / "script.json")
-    sources = _pick_spread(_caption_free_sources(video_id), N_VARIANTS) or [video_path]
+    sources = _thumbnail_sources(video_id) or [video_path]
 
     paths = []
     for i in range(N_VARIANTS):
@@ -68,18 +68,35 @@ def _overlay_texts(script_path: Path) -> list[str]:
     return [o.get("thumbnail_text", "").upper() for o in script.get("title_options", [])]
 
 
-def _caption_free_sources(video_id: int) -> list[Path]:
-    """Raw per-beat visuals (b-roll clips + stills) as frame sources. Unlike the final render
-    these carry NO burned narration captions, so nothing shows through the overlay text.
-    Ordered by filename (== beat order) so `_pick_spread` samples across the video."""
+def _caption_free_sources(video_id: int) -> tuple[list[Path], list[Path]]:
+    """Raw per-beat visuals as frame sources, split `(archival, others)`. Unlike the final
+    render these carry NO burned narration captions, so nothing shows through the overlay
+    text. Each group is ordered by filename (== beat order) for `_pick_spread` sampling."""
     with SessionLocal() as session:
         rows = session.execute(
             select(Asset).where(
-                Asset.video_id == video_id, Asset.kind.in_(("video_broll", "gen", "stock"))
+                Asset.video_id == video_id,
+                Asset.kind.in_(("archival", "video_broll", "gen", "stock")),
             )
         ).scalars().all()
-    paths = sorted((Path(r.url_or_path) for r in rows), key=lambda p: p.name)
-    return [p for p in paths if p.exists()]
+    archival, others = [], []
+    for r in rows:
+        p = Path(r.url_or_path)
+        if p.exists():
+            (archival if r.kind == "archival" else others).append(p)
+    return sorted(archival, key=lambda p: p.name), sorted(others, key=lambda p: p.name)
+
+
+def _thumbnail_sources(video_id: int) -> list[Path]:
+    """Frame sources for the variants, ARCHIVAL FIRST: in a history niche a real photograph
+    thumbnail reads as authentic research (vs an AI-looking frame), so variant `a` — the
+    primary thumb_path — is always an archival photo when one exists. Remaining slots fill
+    from the other visuals, and the built-in A/B test then compares real-vs-generated."""
+    archival, others = _caption_free_sources(video_id)
+    picked = _pick_spread(archival, N_VARIANTS)
+    if len(picked) < N_VARIANTS:
+        picked += _pick_spread(others, N_VARIANTS - len(picked))
+    return picked
 
 
 def _pick_spread(items: list, n: int) -> list:

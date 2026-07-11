@@ -246,6 +246,59 @@ def test_segment_builder_grades_only_archival_beats(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------------------
+# Thumbnail: archival photos lead the variant sources
+# --------------------------------------------------------------------------------------
+
+def _add_asset(session, video_id, kind, path):
+    session.add(Asset(video_id=video_id, kind=kind, source="x", url_or_path=str(path),
+                      license="L", md5=str(path)))
+
+
+def test_thumbnail_sources_archival_first_then_others(tmp_path, monkeypatch):
+    from ai_operator.assembler import thumbnail_generator as tg
+    Session = _session_factory(tmp_path)
+    monkeypatch.setattr(tg, "SessionLocal", Session)
+    arch = tmp_path / "beat_02.jpg"; arch.write_bytes(b"a")
+    gen1 = tmp_path / "beat_01.jpg"; gen1.write_bytes(b"g")
+    gen2 = tmp_path / "beat_03.jpg"; gen2.write_bytes(b"g")
+    with Session() as s:
+        _add_asset(s, 4, "archival", arch)
+        _add_asset(s, 4, "gen", gen1)
+        _add_asset(s, 4, "gen", gen2)
+        s.commit()
+    picked = tg._thumbnail_sources(4)
+    assert picked[0] == arch                       # variant a = ảnh tư liệu thật
+    assert set(picked[1:]) == {gen1, gen2}         # slot còn lại lấp bằng nguồn khác
+
+
+def test_thumbnail_sources_all_archival_when_plenty(tmp_path, monkeypatch):
+    from ai_operator.assembler import thumbnail_generator as tg
+    Session = _session_factory(tmp_path)
+    monkeypatch.setattr(tg, "SessionLocal", Session)
+    paths = []
+    with Session() as s:
+        for i in range(4):
+            p = tmp_path / f"beat_{i:02d}.jpg"; p.write_bytes(b"a")
+            _add_asset(s, 5, "archival", p)
+            paths.append(p)
+        _add_asset(s, 5, "gen", tmp_path / "missing.jpg")  # file không tồn tại -> loại
+        s.commit()
+    picked = tg._thumbnail_sources(5)
+    assert len(picked) == 3 and all(p in paths for p in picked)
+
+
+def test_thumbnail_sources_unchanged_without_archival(tmp_path, monkeypatch):
+    from ai_operator.assembler import thumbnail_generator as tg
+    Session = _session_factory(tmp_path)
+    monkeypatch.setattr(tg, "SessionLocal", Session)
+    g = tmp_path / "beat_01.jpg"; g.write_bytes(b"g")
+    with Session() as s:
+        _add_asset(s, 6, "stock", g)
+        s.commit()
+    assert tg._thumbnail_sources(6) == [g]
+
+
+# --------------------------------------------------------------------------------------
 # Phase 3: description credit block
 # --------------------------------------------------------------------------------------
 
