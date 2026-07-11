@@ -178,6 +178,7 @@ def _patch_checkpoint(monkeypatch):
     # the archival tier (Wikimedia Commons) is keyless, so without a stub these tests would
     # hit the LIVE API; its behavior is covered in test_wikimedia_archival_pipeline.py
     monkeypatch.setattr(vf, "_fetch_archival", lambda *a, **k: None)
+    monkeypatch.setattr(vf, "_archival_anchor", lambda *a: "")  # không chạm DB thật trong unit test
     return written
 
 

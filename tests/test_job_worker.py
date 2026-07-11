@@ -89,3 +89,21 @@ def test_claim_flips_pending_to_running(temp_db, monkeypatch):
     _seed("pull-analytics")
     job_worker.drain_jobs()
     assert seen == ["running"]
+
+
+def test_gen_visuals_handler_passes_every_typer_option_explicitly(monkeypatch):
+    """Calling a typer command as a plain function leaves unpassed options as OptionInfo
+    objects, which are TRUTHY — an unset `gen_all` silently forced every queued
+    gen-visuals run into all-SDXL mode (skipping the archival/stock tiers). The handler
+    must therefore pass real booleans for every option."""
+    captured = {}
+    monkeypatch.setattr(
+        job_worker.media_commands, "gen_visuals",
+        lambda **kw: captured.update(kw),
+    )
+    job = Job(command="gen-visuals", video_id=7, params={"motion": False}, status="running",
+              idempotency_key="k-genvis-typer-trap")
+    job_worker._gen_visuals(job)
+    assert captured["video_id"] == 7
+    assert captured["motion"] is False
+    assert captured["gen_all"] is False   # bool thật, không phải OptionInfo truthy

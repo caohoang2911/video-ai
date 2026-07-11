@@ -25,6 +25,8 @@ from .. import checkpoint
 from ..assembler.beat_timing import compute_beat_durations
 from ..assembler.ffmpeg_encode import probe_duration
 from ..config import OUTPUT_DIR
+from ..db.engine import SessionLocal
+from ..db.models import Video
 from ..logging_setup import get_logger
 from . import asset_store, clip_reranker, cloud_flux, local_sdxl, stock_clients
 
@@ -133,12 +135,35 @@ def _rank_candidates(text: str, candidates: list[dict]) -> list[dict]:
     return ranked
 
 
-def _fetch_archival(keywords: list[str], text: str = "") -> dict | None:
+def _archival_anchor(video_id: int) -> str:
+    """Entity phrase anchoring Commons searches. Beat keywords describe VISUALS ("stopped
+    clock", "burning ship") -- useless as archive queries; the archive is organized around
+    the EVENT, which the topic names ("The Halifax Explosion: ..."). Falls back to the
+    video title's pre-colon segment when the topic row is gone."""
+    from ..db.models import Topic  # local import: avoids widening module deps for one lookup
+
+    try:
+        with SessionLocal() as s:
+            video = s.get(Video, video_id)
+            topic = s.get(Topic, video.topic_id) if video and video.topic_id else None
+            title = (topic.title if topic else (video.title if video else "")) or ""
+    except Exception as exc:  # noqa: BLE001 - anchor là gia vị, thiếu nó tier vẫn chạy bằng keywords
+        log.warning("archival anchor lookup failed for video %s: %s", video_id, exc)
+        return ""
+    return title.split(":")[0].strip()
+
+
+def _fetch_archival(keywords: list[str], text: str = "", anchor: str = "") -> dict | None:
     """Most content-relevant Wikimedia Commons ARCHIVAL photo candidate for a beat
     (already license- and resolution-filtered by the client); None when Commons has
     nothing usable -- the caller then falls through to generic stock/generation.
-    "Thật khi có thể, vẽ khi phải": real archival material outranks stock and AI."""
-    cands = stock_clients.search_wikimedia_commons(" ".join(keywords[:4]))
+    Query = event anchor + the beat's first keywords, CLIP re-ranked against the beat
+    text. "Thật khi có thể, vẽ khi phải": real archival outranks stock and AI."""
+    query = f"{anchor} {' '.join(keywords[:2])}".strip()
+    cands = stock_clients.search_wikimedia_commons(query)
+    if not cands and anchor:
+        # niche beat wording can over-narrow the search -- retry on the event alone
+        cands = stock_clients.search_wikimedia_commons(anchor)
     if not cands:
         return None
     return _rank_candidates(text, cands)[0]
@@ -272,16 +297,21 @@ def acquire(
     motion_beats = 0
     total_beats = 0
     beat_seconds = _estimate_beat_seconds(video_id, shot_list)
+    anchor = _archival_anchor(video_id)  # tên sự kiện neo mọi query Commons của video này
+    log.info("video %s: archival anchor=%r", video_id, anchor)
 
     for i, beat in enumerate(shot_list):
         total_beats += 1
         beat_id = beat["beat_id"]
         keywords = beat.get("keywords", [])[:4]
         mood = beat.get("mood", "")
-        # A beat is generated (not stock-fetched) when the script marks it `illustration` --
-        # a story/era-specific scene stock can't honestly show -- or when it matches the
-        # legacy map/diagram keyword heuristic (pre-visual_kind scripts).
-        is_diagram = _is_diagram_beat(beat) or (beat.get("visual_kind") or "").lower() == "illustration"
+        # Two distinct "generate" reasons, split because the archival tier treats them
+        # differently: a MAP/diagram beat is genuinely better drawn (SDXL), but an
+        # `illustration` beat -- an era-specific scene generic stock can't show -- is
+        # exactly where a real period photograph (Commons) beats a painted one.
+        is_map = _is_diagram_beat(beat)
+        is_illustration = (beat.get("visual_kind") or "").lower() == "illustration"
+        is_diagram = is_map or is_illustration  # stock tiers still skip both
         # CLIP relevance text for this beat: its keywords + narration span (what the scene is about).
         text = ", ".join(keywords) + (f". {beat.get('narration_span', '')}" if beat.get("narration_span") else "")
 
@@ -298,15 +328,24 @@ def acquire(
                     continue
 
             # Tier 2a: archival photo (Wikimedia Commons) -- a real photograph of the actual
-            # ship/event beats both generic stock and AI illustration for this niche.
+            # ship/event beats both generic stock and AI illustration for this niche. Tried
+            # for illustration beats TOO (era scenes are archival's home turf); only true
+            # map/diagram beats go straight to generation.
             record = None
-            if not is_diagram:
-                best = _fetch_archival(keywords, text)
-                if best is not None:
+            if not is_map:
+                best = _fetch_archival(keywords, text, anchor)
+                if best is None:
+                    log.info("beat %s: archival MISS (no qualifying Commons candidate)", beat_id)
+                else:
                     record = asset_store.save_archival(
                         video_id, beat_id, best["url"],
                         license_short=best["license"], artist=best["artist"],
                         file_page=best["file_page"],
+                    )
+                    log.info(
+                        "beat %s: archival %s — %s (%s)",
+                        beat_id, "SAVED" if record else "dup/download-failed",
+                        best["url"].rsplit("/", 1)[-1][:70], best["license"],
                     )
             if record is not None:
                 saved.append(record)

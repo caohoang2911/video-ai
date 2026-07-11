@@ -135,6 +135,7 @@ def _acquire_one_beat(monkeypatch, *, archival_hit: bool):
         visual_fetcher, "checkpoint",
         SimpleNamespace(is_done=lambda *a: False, write=lambda *a, **k: None),
     )
+    monkeypatch.setattr(visual_fetcher, "_archival_anchor", lambda *a: "Test Event")
     monkeypatch.setattr(visual_fetcher, "_estimate_beat_seconds", lambda *a: [0.0])
     cand = {"url": "u", "license": "CC BY 4.0", "artist": "A", "file_page": "p"}
     monkeypatch.setattr(visual_fetcher, "_fetch_archival", lambda *a, **k: cand if archival_hit else None)
@@ -170,6 +171,58 @@ def test_archival_miss_falls_through_to_stock_photo(monkeypatch):
     saved, calls = _acquire_one_beat(monkeypatch, archival_hit=False)
     assert calls["stock"] == 1
     assert saved[0]["kind"] == "stock"
+
+
+def test_illustration_beat_tries_archival_before_generating(monkeypatch):
+    """Era-scene beats (visual_kind=illustration) are archival's home turf: a real period
+    photograph must win over a painted SDXL scene when Commons has one."""
+    monkeypatch.setattr(
+        visual_fetcher, "checkpoint",
+        SimpleNamespace(is_done=lambda *a: False, write=lambda *a, **k: None),
+    )
+    monkeypatch.setattr(visual_fetcher, "_archival_anchor", lambda *a: "Test Event")
+    monkeypatch.setattr(visual_fetcher, "_estimate_beat_seconds", lambda *a: [0.0])
+    cand = {"url": "u", "license": "Public domain", "artist": "A", "file_page": "p"}
+    monkeypatch.setattr(visual_fetcher, "_fetch_archival", lambda *a, **k: cand)
+    generated = []
+    monkeypatch.setattr(visual_fetcher, "_generate_visual",
+                        lambda *a, **k: generated.append(1) or None)
+    monkeypatch.setattr(
+        visual_fetcher, "asset_store",
+        SimpleNamespace(save_archival=lambda *a, **k: {"kind": "archival"}, list_assets=lambda *a: []),
+    )
+    shot = [{"beat_id": 1, "keywords": ["burning ship"], "mood": "somber", "visual_kind": "illustration"}]
+    saved = visual_fetcher.acquire(102, shot, stills_only=True)
+    assert saved[0]["kind"] == "archival"
+    assert generated == []  # không đốt SDXL khi đã có ảnh thật
+
+
+def test_map_beat_skips_archival_and_generates(monkeypatch):
+    """True map/diagram beats stay generation-first — SDXL draws a clean period map,
+    archival search for 'route map' would return noise."""
+    monkeypatch.setattr(
+        visual_fetcher, "checkpoint",
+        SimpleNamespace(is_done=lambda *a: False, write=lambda *a, **k: None),
+    )
+    monkeypatch.setattr(visual_fetcher, "_archival_anchor", lambda *a: "Test Event")
+    monkeypatch.setattr(visual_fetcher, "_estimate_beat_seconds", lambda *a: [0.0])
+    fetched = []
+    monkeypatch.setattr(visual_fetcher, "_fetch_archival",
+                        lambda *a, **k: fetched.append(1) or None)
+    monkeypatch.setattr(visual_fetcher, "_generate_visual",
+                        lambda *a, **k: (Path("/tmp/x.png"), "sdxl"))
+    monkeypatch.setattr(
+        visual_fetcher, "asset_store",
+        SimpleNamespace(
+            save_generated=lambda *a, **k: {"kind": "gen"},
+            grade_batch_coherence=lambda paths: (1.0, []),
+            list_assets=lambda *a: [],
+        ),
+    )
+    shot = [{"beat_id": 1, "keywords": ["harbor channel map"], "mood": "informative"}]
+    saved = visual_fetcher.acquire(103, shot, stills_only=True)
+    assert fetched == []          # beat bản đồ không dò Commons
+    assert saved[0]["kind"] == "gen"
 
 
 # --------------------------------------------------------------------------------------

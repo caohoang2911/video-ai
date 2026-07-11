@@ -61,7 +61,15 @@ def _gen_audio(job: Job) -> None:
 
 
 def _gen_visuals(job: Job) -> None:
-    media_commands.gen_visuals(video_id=_require_video(job), motion=bool(_param(job, "motion", False)))
+    # typer trap: calling a typer command as a plain function leaves unpassed options as
+    # OptionInfo objects — which are TRUTHY. `gen_all` unset therefore silently forced
+    # every queued gen-visuals run into all-SDXL mode (skipping archival/stock tiers),
+    # so every option must be passed explicitly here.
+    media_commands.gen_visuals(
+        video_id=_require_video(job),
+        motion=bool(_param(job, "motion", False)),
+        gen_all=bool(_param(job, "gen_all", False)),
+    )
 
 
 def _revoice(job: Job) -> None:
