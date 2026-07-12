@@ -8,6 +8,7 @@ across beats, and generated images get an "AI-Generated" watermark burned in for
 from __future__ import annotations
 
 import hashlib
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -97,12 +98,18 @@ def save_archival(
     per-provider stock licenses), so the row's license field stores the full attribution
     triple `license | artist | file page URL` -- the publish phase splits it to build the
     description credit line. Returns None on duplicate/failed download."""
-    try:
-        resp = requests.get(url, timeout=10, headers={"User-Agent": "ai-operator/0.1"})
-        resp.raise_for_status()
-    except Exception as exc:
-        log.warning("beat %s: archival download failed: %s", beat_id, exc)
-        return None
+    resp = None
+    for attempt in (1, 2):  # upload.wikimedia.org rate-limits bursts: one polite retry
+        try:
+            resp = requests.get(url, timeout=10, headers={"User-Agent": "ai-operator/0.1"})
+            resp.raise_for_status()
+            break
+        except Exception as exc:
+            if attempt == 1 and "429" in str(exc):
+                time.sleep(5)
+                continue
+            log.warning("beat %s: archival download failed: %s", beat_id, exc)
+            return None
 
     md5 = _md5_bytes(resp.content)
     if md5 in _existing_md5s(video_id):

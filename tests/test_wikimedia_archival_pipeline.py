@@ -197,6 +197,23 @@ def test_illustration_beat_tries_archival_before_generating(monkeypatch):
     assert generated == []  # không đốt SDXL khi đã có ảnh thật
 
 
+def test_fetch_archival_skips_urls_already_used_by_earlier_beats(monkeypatch):
+    """Anchor-retry hands every beat the SAME candidate pool — the used-set must steer
+    later beats to the next-ranked photo instead of the md5-dup -> SDXL fallback."""
+    cands = [
+        {"url": "u1", "thumb": "t1", "source": "wikimedia", "license": "PD", "artist": "", "file_page": ""},
+        {"url": "u2", "thumb": "t2", "source": "wikimedia", "license": "PD", "artist": "", "file_page": ""},
+    ]
+    monkeypatch.setattr(visual_fetcher.stock_clients, "search_wikimedia_commons", lambda q: list(cands))
+    monkeypatch.setattr(visual_fetcher, "_rank_candidates", lambda text, c: list(c))
+
+    first = visual_fetcher._fetch_archival(["kw"], "t", "Event", set())
+    assert first["url"] == "u1"
+    second = visual_fetcher._fetch_archival(["kw"], "t", "Event", {"u1"})
+    assert second["url"] == "u2"                     # ảnh kế tiếp, không đụng hàng
+    assert visual_fetcher._fetch_archival(["kw"], "t", "Event", {"u1", "u2"}) is None
+
+
 def test_map_beat_skips_archival_and_generates(monkeypatch):
     """True map/diagram beats stay generation-first — SDXL draws a clean period map,
     archival search for 'route map' would return noise."""

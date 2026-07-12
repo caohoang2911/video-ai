@@ -153,20 +153,26 @@ def _archival_anchor(video_id: int) -> str:
     return title.split(":")[0].strip()
 
 
-def _fetch_archival(keywords: list[str], text: str = "", anchor: str = "") -> dict | None:
+def _fetch_archival(
+    keywords: list[str], text: str = "", anchor: str = "", used: set[str] | None = None
+) -> dict | None:
     """Most content-relevant Wikimedia Commons ARCHIVAL photo candidate for a beat
     (already license- and resolution-filtered by the client); None when Commons has
     nothing usable -- the caller then falls through to generic stock/generation.
     Query = event anchor + the beat's first keywords, CLIP re-ranked against the beat
-    text. "Thật khi có thể, vẽ khi phải": real archival outranks stock and AI."""
+    text. `used` carries URLs already taken by earlier beats: anchor-retry gives every
+    beat the SAME candidate pool, so without it one photo tops every CLIP ranking, the
+    md5 dedup rejects it and beats needlessly fall to generation (the sibling-shorts
+    batch_used lesson). "Thật khi có thể, vẽ khi phải"."""
     query = f"{anchor} {' '.join(keywords[:2])}".strip()
     cands = stock_clients.search_wikimedia_commons(query)
     if not cands and anchor:
         # niche beat wording can over-narrow the search -- retry on the event alone
         cands = stock_clients.search_wikimedia_commons(anchor)
-    if not cands:
-        return None
-    return _rank_candidates(text, cands)[0]
+    ranked = _rank_candidates(text, cands)
+    if used:
+        ranked = [c for c in ranked if c["url"] not in used]
+    return ranked[0] if ranked else None
 
 
 def _fetch_stock(keywords: list[str], text: str = "") -> tuple[str, str] | None:
@@ -299,6 +305,7 @@ def acquire(
     beat_seconds = _estimate_beat_seconds(video_id, shot_list)
     anchor = _archival_anchor(video_id)  # tên sự kiện neo mọi query Commons của video này
     log.info("video %s: archival anchor=%r", video_id, anchor)
+    archival_used: set[str] = set()  # ảnh đã lấy — beat sau chọn ảnh kế tiếp, không đụng hàng
 
     for i, beat in enumerate(shot_list):
         total_beats += 1
@@ -333,7 +340,7 @@ def acquire(
             # map/diagram beats go straight to generation.
             record = None
             if not is_map:
-                best = _fetch_archival(keywords, text, anchor)
+                best = _fetch_archival(keywords, text, anchor, archival_used)
                 if best is None:
                     log.info("beat %s: archival MISS (no qualifying Commons candidate)", beat_id)
                 else:
@@ -342,6 +349,8 @@ def acquire(
                         license_short=best["license"], artist=best["artist"],
                         file_page=best["file_page"],
                     )
+                    if record is not None:
+                        archival_used.add(best["url"])
                     log.info(
                         "beat %s: archival %s — %s (%s)",
                         beat_id, "SAVED" if record else "dup/download-failed",
