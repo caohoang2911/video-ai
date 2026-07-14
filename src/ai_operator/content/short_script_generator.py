@@ -2,8 +2,11 @@
 
 Each short is built around a DIFFERENT high-surprise payoff from the parent, uses only
 facts already verified by the parent's research (no new claims), and closes on a
-curiosity-gap question that sends viewers to the full video. Invalid shorts are dropped
-at validation; one retry tops the batch up if fewer than MIN_VALID survive.
+curiosity-gap question that sends viewers to the full video. The parent's single
+highest-surprise payoff is RESERVED as the "protected reveal": shorts aim their
+curiosity questions at it but never consume it — otherwise a batch collectively
+strip-mines the full video's best moments and kills the funnel. Invalid shorts are
+dropped at validation; one retry tops the batch up if fewer than MIN_VALID survive.
 """
 
 from __future__ import annotations
@@ -28,7 +31,11 @@ Rules for EVERY short (the curiosity-gap contract):
 1. Self-contained: a viewer who has never seen the channel must follow it cold.
 2. Deliver EXACTLY ONE satisfying verified fact from the source material — the short must
    feel complete, not like a trailer.
-3. WITHHOLD the twist/answer that the full video resolves. Never spoil the main reveal.
+3. PROTECTED REVEAL — the source material includes `protected_reveal`, the full
+   documentary's biggest payoff. NEVER state, paraphrase, or hint at its content in any
+   short. EVERY short's `curiosity_question` must be a question whose answer IS that
+   protected reveal, each phrased from its own short's angle. Build shorts ONLY from the
+   `top_payoffs` list; withhold any other twist the full video resolves.
 4. ENDING RECIPE — the last 3 narration sentences, in this order:
    a. LAND the promised fact completely (the short must feel finished, not cut off).
    b. PLANT one new, concrete, unresolved detail — a nameable document/decision/person/
@@ -40,8 +47,13 @@ Rules for EVERY short (the curiosity-gap contract):
       visiting the channel — specific beats vague every time.
 5. Use ONLY facts present in the provided source facts/citations. Never invent numbers,
    names, dates, or events.
-6. Narration: 75-110 words, punchy documentary voice, first sentence is a hook (no
-   'imagine', no 'what if I told you').
+6. Narration: 75-110 words, punchy documentary voice. EFFECT-FIRST HOOK: the first
+   sentence opens on the most concrete, verifiable ANOMALY or artifact in the source
+   facts (a frozen clock, an impossible number, an object out of place) and WITHHOLDS
+   its cause — never open by naming the disaster or summarizing the outcome (no
+   'imagine', no 'what if I told you'). When the source facts support it, run a
+   mid-short credibility beat: the anomaly was doubted or dismissed, then independently
+   verified — that verification lands as the short's delivered fact (rule 2).
 7. `title`: must anchor a SEARCHABLE ENTITY (ship/place/event name or year) AND a concrete
    stake or number — never a generic label. "The Neighborhood That Vanished" is WEAK;
    "Little Germany: Erased by One Afternoon in 1904" is the bar. <=80 chars.
@@ -54,6 +66,8 @@ Rules for EVERY short (the curiosity-gap contract):
    beats "The neighborhood didn't fade."
 9. `beats`: 5-6 visual beats (a new image every 5-7 seconds keeps swipe-away at bay);
    keywords should match the source shot list's imagery so existing visuals can be reused.
+   LOOP ENDING: the LAST beat's keywords echo the FIRST beat's imagery (same keyword
+   family) so the short loops seamlessly back into its opening frame on rewatch.
 10. `end_card_text`: the 3-second closing card. TWO fragments, <=5 words each, on separate
     lines — compress the PLANTED DETAIL from the ending recipe so it re-opens the gap on
     screen, NEVER the spoken question repeated and NEVER a summary. Example: planted
@@ -67,18 +81,26 @@ Return JSON only:
 
 
 def _distill_parent(parent_script: dict) -> str:
-    """Compact the parent script into the facts the prompt may use (sorted best payoffs first)."""
+    """Compact the parent script into the facts the prompt may use (sorted best payoffs first).
+
+    The single highest-surprise payoff is split out as `protected_reveal` — removed from
+    the buildable material so the batch can't consume the full video's best moment; every
+    short's curiosity question aims at it instead. With fewer than 2 payoffs there is
+    nothing to protect without starving the batch, so everything stays buildable."""
     payoffs = sorted(
         parent_script.get("payoff_nodes", []),
         key=lambda p: p.get("surprise_score", 0),
         reverse=True,
     )
+    protected = payoffs[0] if len(payoffs) >= 2 else None
+    buildable = payoffs[1:] if protected else payoffs
     shot_keywords = [kw for b in parent_script.get("shot_list", []) for kw in b.get("keywords", [])]
     return json.dumps(
         {
             "title_options": parent_script.get("title_options", []),
             "hooks": parent_script.get("hooks", []),
-            "top_payoffs": payoffs[:6],
+            "protected_reveal": protected,
+            "top_payoffs": buildable[:6],
             "citations": parent_script.get("citations", []),
             "sources": parent_script.get("sources", []),
             "available_imagery_keywords": sorted(set(shot_keywords)),
