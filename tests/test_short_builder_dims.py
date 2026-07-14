@@ -76,3 +76,12 @@ def test_build_short_rejects_over_60s_narration(voiced_short, tmp_path):
     with patch.object(short_builder.ffmpeg_encode, "probe_duration", return_value=59.0):
         with pytest.raises(ValueError, match="60s"):
             short_builder.build_short(voiced_short)
+
+
+def test_portrait_caption_style_keeps_phone_safe_side_margins():
+    """Phones taller than 16:9 (19.5:9, 20:9) cover-fill the 9:16 frame and crop up to
+    ~10% off each side, so caption lines must wrap well inside the frame. libass margins
+    are script units on PlayResX=384: 40 units ≈ 112px per side at 1080w — the crop zone."""
+    style = dict(kv.split("=", 1) for kv in short_builder._PORTRAIT_SUB_STYLE.split(","))
+    assert int(style["MarginL"]) >= 40
+    assert int(style["MarginR"]) >= 40

@@ -34,8 +34,12 @@ END_CARD_SECONDS = 3.0
 # against PlayResY=288, so portrait (1920 tall) doubles the rendered pixels vs landscape —
 # 11 lands ~73px (mobile-legible without covering the frame); MarginV=85 (~570px up) keeps
 # the block clear of the Shorts UI zone (bottom ~25%: like/comment rail + title strip).
+# MarginL/MarginR=45 (script units on PlayResX=384 -> ~127px per side at 1080w): phones
+# taller than 16:9 (19.5:9, 20:9) cover-fill the 9:16 frame and crop up to ~10% off each
+# side, so caption lines must wrap well inside the frame or edge glyphs get cut on screen.
 _PORTRAIT_SUB_STYLE = (
-    "FontSize=11,Outline=2,Shadow=0,BorderStyle=1,Alignment=2,MarginV=85,"
+    "FontSize=11,Outline=2,Shadow=0,BorderStyle=1,Alignment=2,"
+    "MarginV=85,MarginL=45,MarginR=45,"
     "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000"
 )
 
