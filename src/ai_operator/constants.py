@@ -13,10 +13,10 @@ OPENAI_TTS1_USD_PER_1M_CHARS = 15.0     # OpenAI tts-1
 # --- LLM (Anthropic) — USD per 1M tokens {input, output} ---
 ANTHROPIC_PRICES = {
     "claude-sonnet-5": {"in": 3.0, "out": 15.0},
-    "claude-opus-4-8": {"in": 15.0, "out": 75.0},
+    "claude-opus-4-8": {"in": 5.0, "out": 25.0},
     "claude-haiku-4-5": {"in": 1.0, "out": 5.0},
 }
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 
 # --- Image gen ---
 FAL_FLUX_USD_PER_IMAGE = 0.025

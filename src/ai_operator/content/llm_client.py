@@ -21,11 +21,11 @@ log = get_logger("content.llm_client")
 
 _CHARS_PER_TOKEN = 4  # rough pre-call estimate so budget_guard can reserve before spending
 _GEMINI_FLAT_ESTIMATE_USD = 0.05  # Gemini has no per-token price in constants.py yet
-# claude-sonnet-5 runs ADAPTIVE THINKING by default, and thinking tokens count against
-# max_tokens (it is the ceiling on thinking + text combined). A tight ceiling lets a long
-# thinking pass consume the whole budget and return a response with NO text block at all,
-# which silently drops the call to the Gemini fallback. Floor the request ceiling high
-# enough that thinking + a full script both fit; billing corrects to real usage afterwards.
+# Adaptive thinking tokens count against max_tokens (it is the ceiling on thinking + text
+# combined). A tight ceiling lets a long thinking pass consume the whole budget and return
+# a response with NO text block at all, which silently drops the call to the Gemini
+# fallback. Floor the request ceiling high enough that thinking + a full script both fit;
+# billing corrects to real usage afterwards.
 _ANTHROPIC_MIN_MAX_TOKENS = 16_000
 
 
@@ -68,6 +68,10 @@ def _complete_anthropic(system: str, user: str, *, max_tokens: int, step: str, v
         response = client.messages.create(
             model=DEFAULT_ANTHROPIC_MODEL,
             max_tokens=_effective_max_tokens(max_tokens),
+            # Opus 4.8 runs WITHOUT thinking when the param is omitted (unlike Sonnet 5,
+            # where adaptive is the default) — opt in so script/hook generation gets the
+            # reasoning pass the model tier is being paid for.
+            thinking={"type": "adaptive"},
             system=system,
             messages=[{"role": "user", "content": user}],
         )
