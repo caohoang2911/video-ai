@@ -9,8 +9,10 @@ never reworked. Shorts NEVER auto-publish — the human gate is the same as for 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+from pathlib import Path
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
@@ -99,7 +101,7 @@ def _produce_one(
             s.commit()
         _advance(child_id, VideoState.VOICED)
 
-        _reuse_parent_images(parent_id, parent_script, child_id, short, batch_used)
+        _source_short_images(parent_id, parent_script, child_id, short, batch_used)
         build_short(child_id)  # -> rendered
 
         if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID:
@@ -181,6 +183,60 @@ def _discard_unpublished(children: list[Video]) -> None:
         shutil.rmtree(OUTPUT_DIR / str(child.id), ignore_errors=True)
         (CHECKPOINT_DIR / f"{child.id}.checkpoint.json").unlink(missing_ok=True)
         log.info("discarded unpublished short %s (state=%s)", child.id, state)
+
+
+def _distinct_still_count(img_dir: Path) -> int:
+    """How many VISUALLY DISTINCT stills the parent has. A parent that rendered from b-roll
+    video keeps no still pool (often one duplicate archival leftover), so a raw file count
+    lies — dedup by md5 so the reuse-vs-refetch decision reflects real coverage."""
+    seen: set[str] = set()
+    for p in img_dir.glob("beat_*.jpg"):
+        try:
+            seen.add(hashlib.md5(p.read_bytes()).hexdigest())
+        except OSError:
+            continue
+    return len(seen)
+
+
+def _source_short_images(
+    parent_id: int, parent_script: dict, child_id: int, short,
+    batch_used: set[int] | None = None,
+) -> None:
+    """Give the child short one still per beat. Reuse the parent's archival/stock stills
+    when it has enough DISTINCT ones (fast, no API); otherwise the parent rendered from
+    b-roll video and has no still pool to draw on, so re-fetch fresh stills for the short's
+    OWN keywords (archival -> stock -> generated) — exactly what build_short consumes."""
+    parent_img = OUTPUT_DIR / str(parent_id) / "img"
+    distinct = _distinct_still_count(parent_img)
+    if distinct >= len(short.beats):
+        _reuse_parent_images(parent_id, parent_script, child_id, short, batch_used)
+        return
+    log.info(
+        "parent %s has %s distinct stills (< %s short beats) -> re-fetching stills for short %s",
+        parent_id, distinct, len(short.beats), child_id,
+    )
+    _refetch_short_stills(child_id, short)
+
+
+def _refetch_short_stills(child_id: int, short) -> None:
+    """Fetch one still per short beat via the shared 4-tier acquirer in stills_only mode
+    (no video tier), keyed on the short's own keywords. acquire persists to the child's
+    img/beat_XX.jpg; verify every beat landed so build_short never renders a blank beat."""
+    from ..media import visual_fetcher  # lazy: heavy CLIP/torch deps, only on the refetch path
+
+    shot_list = [
+        {"beat_id": i + 1, "keywords": list(beat.keywords), "mood": beat.mood}
+        for i, beat in enumerate(short.beats)
+    ]
+    visual_fetcher.acquire(child_id, shot_list, stills_only=True)
+
+    child_img = OUTPUT_DIR / str(child_id) / "img"
+    missing = [
+        i + 1 for i in range(len(short.beats))
+        if not (child_img / f"beat_{i + 1:02d}.jpg").exists()
+    ]
+    if missing:
+        raise FileNotFoundError(f"short {child_id}: no still for beats {missing} after re-fetch")
 
 
 def _reuse_parent_images(

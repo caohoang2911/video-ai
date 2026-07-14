@@ -64,6 +64,7 @@ def _run(parent_id: int, shorts=None, *, force: bool = False, render_boom: set[i
 
     with patch.object(shorts_runner, "generate_short_scripts", return_value=shorts), \
          patch.object(shorts_runner.tts_narrator, "synthesize", side_effect=fake_synth), \
+         patch.object(shorts_runner, "_source_short_images", side_effect=lambda *a, **k: None), \
          patch.object(shorts_runner, "build_short", side_effect=fake_build), \
          patch.object(shorts_runner, "notify", side_effect=AssertionError("no notify in tests")):
         ids = shorts_runner.generate_shorts(parent_id, force=force)
@@ -169,3 +170,45 @@ def test_one_failing_short_does_not_abort_batch(published_main):
     assert len(kids) == 3
     failed = [k for k in kids if k.state == VideoState.FAILED.value]
     assert len(failed) == 1 and len(ids) == 2
+
+
+def test_source_images_reuses_when_parent_has_enough_distinct_stills(tmp_path, monkeypatch):
+    """Enough distinct parent stills -> reuse path (no API refetch)."""
+    from ai_operator.ops import shorts_runner as sr
+
+    monkeypatch.setattr(sr, "OUTPUT_DIR", tmp_path)
+    img = tmp_path / "6" / "img"
+    img.mkdir(parents=True)
+    for i in range(1, 6):
+        (img / f"beat_{i:02d}.jpg").write_bytes(f"distinct-{i}".encode())
+
+    class _Beat:
+        keywords, mood = ["k"], "m"
+    short = type("S", (), {"beats": [_Beat()] * 3})()
+
+    calls = {"reuse": 0, "refetch": 0}
+    monkeypatch.setattr(sr, "_reuse_parent_images", lambda *a, **k: calls.__setitem__("reuse", 1))
+    monkeypatch.setattr(sr, "_refetch_short_stills", lambda *a, **k: calls.__setitem__("refetch", 1))
+    sr._source_short_images(6, {}, 99, short)
+    assert calls == {"reuse": 1, "refetch": 0}
+
+
+def test_source_images_refetches_when_parent_stills_are_duplicates(tmp_path, monkeypatch):
+    """Parent rendered from b-roll: files exist but collapse to 1 distinct md5 -> refetch."""
+    from ai_operator.ops import shorts_runner as sr
+
+    monkeypatch.setattr(sr, "OUTPUT_DIR", tmp_path)
+    img = tmp_path / "6" / "img"
+    img.mkdir(parents=True)
+    for i in (2, 3):  # same bytes -> 1 distinct, mirrors the real video-6 bug
+        (img / f"beat_{i:02d}.jpg").write_bytes(b"same-archival-leftover")
+
+    class _Beat:
+        keywords, mood = ["k"], "m"
+    short = type("S", (), {"beats": [_Beat()] * 5})()
+
+    calls = {"reuse": 0, "refetch": 0}
+    monkeypatch.setattr(sr, "_reuse_parent_images", lambda *a, **k: calls.__setitem__("reuse", 1))
+    monkeypatch.setattr(sr, "_refetch_short_stills", lambda *a, **k: calls.__setitem__("refetch", 1))
+    sr._source_short_images(6, {}, 99, short)
+    assert calls == {"reuse": 0, "refetch": 1}
