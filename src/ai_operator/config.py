@@ -32,6 +32,9 @@ class Settings(BaseSettings):
 
     # --- content (phase 02) ---
     ANTHROPIC_API_KEY: str | None = None
+    # Optional Anthropic-compatible gateway (self-hosted router/proxy). None -> official
+    # api.anthropic.com. The endpoint must speak the Messages API (/v1/messages) format.
+    ANTHROPIC_BASE_URL: str | None = None
     GEMINI_API_KEY: str | None = None
 
     # --- tts (phase 03) ---

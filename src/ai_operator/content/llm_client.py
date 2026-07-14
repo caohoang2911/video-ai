@@ -63,7 +63,11 @@ def _complete_anthropic(system: str, user: str, *, max_tokens: int, step: str, v
     estimated = estimate_step("anthropic", in_tokens=est_in_tokens, out_tokens=max_tokens, model=DEFAULT_ANTHROPIC_MODEL)
     ledger_id = check_and_reserve(estimated, step=step, provider="anthropic", video_id=video_id, units=est_in_tokens)
 
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    # base_url=None falls through to the official API; set ANTHROPIC_BASE_URL in .env to
+    # route through an Anthropic-compatible gateway (must speak /v1/messages format).
+    client = anthropic.Anthropic(
+        api_key=settings.ANTHROPIC_API_KEY, base_url=settings.ANTHROPIC_BASE_URL
+    )
     try:
         response = client.messages.create(
             model=DEFAULT_ANTHROPIC_MODEL,
