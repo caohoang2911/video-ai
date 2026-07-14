@@ -16,6 +16,7 @@ the caller must persist them for the publish-phase credit line.
 from __future__ import annotations
 
 import re
+import time
 from datetime import timedelta
 
 from requests import Session
@@ -107,6 +108,18 @@ def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text).replace("\n", " ").strip()
 
 
+def _retry_after_seconds(exc: Exception, default: float) -> float:
+    """Seconds to wait before retrying a 429/503, from the server's `Retry-After` header
+    when present (integer-seconds form), else `default`. Capped so a hostile header can't
+    stall the whole render."""
+    resp = getattr(exc, "response", None)
+    raw = (getattr(resp, "headers", {}) or {}).get("Retry-After") if resp is not None else None
+    try:
+        return min(float(raw), 30.0) if raw is not None else default
+    except (TypeError, ValueError):
+        return default  # HTTP-date form is rare here; fall back to the backoff default
+
+
 def search_pexels(keyword: str, per_page: int = CANDIDATE_POOL) -> list[dict]:
     """Landscape photo candidates (>=1920w) for `keyword`; [] if unconfigured or the call fails."""
     if _source_disabled("pexels") or not settings.PEXELS_API_KEY:
@@ -169,27 +182,38 @@ def search_wikimedia_commons(keyword: str, per_page: int = CANDIDATE_POOL) -> li
     `url` is the 1920px scaled render (originals can be 100MP museum scans)."""
     if _source_disabled("wikimedia"):
         return []
-    try:
-        r = _commons_client().get(
-            _COMMONS_API,
-            params={
-                "action": "query", "format": "json",
-                "generator": "search",
-                "gsrsearch": f"filetype:bitmap {keyword}",
-                "gsrnamespace": 6,  # File: namespace
-                "gsrlimit": per_page,
-                "prop": "imageinfo",
-                "iiprop": "url|size|extmetadata",
-                "iiurlwidth": 1920,  # scaled render + thumb template in one request
-            },
-            headers={"User-Agent": _COMMONS_UA},
-            timeout=8,
-        )
-        r.raise_for_status()
-        pages = (r.json().get("query") or {}).get("pages", {})
-    except Exception as exc:
-        log.warning("wikimedia commons search failed for %r: %s", keyword, exc)
-        return []
+    params = {
+        "action": "query", "format": "json",
+        "generator": "search",
+        "gsrsearch": f"filetype:bitmap {keyword}",
+        "gsrnamespace": 6,  # File: namespace
+        "gsrlimit": per_page,
+        "prop": "imageinfo",
+        "iiprop": "url|size|extmetadata",
+        "iiurlwidth": 1920,  # scaled render + thumb template in one request
+    }
+    # A shorts batch fires many searches back-to-back; Commons throttles bursts with 429
+    # (503 when overloaded). Without a retry the beat silently falls through to SDXL, so the
+    # short loses its real archival photo -- honour Retry-After, else exponential backoff.
+    r = None
+    for attempt in (1, 2, 3):
+        try:
+            r = _commons_client().get(
+                _COMMONS_API, params=params, headers={"User-Agent": _COMMONS_UA}, timeout=8
+            )
+            r.raise_for_status()
+            break
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if attempt < 3 and status in (429, 503):
+                delay = _retry_after_seconds(exc, default=2 ** attempt)  # 2s, then 4s
+                log.info("commons %r: HTTP %s, backing off %ss (attempt %s/3)",
+                         keyword, status, delay, attempt)
+                time.sleep(delay)
+                continue
+            log.warning("wikimedia commons search failed for %r: %s", keyword, exc)
+            return []
+    pages = (r.json().get("query") or {}).get("pages", {})
 
     out: list[dict] = []
     # generator=search returns an unordered page map; `index` restores relevance order
