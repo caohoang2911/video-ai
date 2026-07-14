@@ -139,12 +139,19 @@ def _archival_anchor(video_id: int) -> str:
     """Entity phrase anchoring Commons searches. Beat keywords describe VISUALS ("stopped
     clock", "burning ship") -- useless as archive queries; the archive is organized around
     the EVENT, which the topic names ("The Halifax Explosion: ..."). Falls back to the
-    video title's pre-colon segment when the topic row is gone."""
+    video title's pre-colon segment when the topic row is gone.
+
+    A SHORT has no topic row and its title is a hook with the entity after an em-dash
+    ("Butter, Cheese, and Ammunition — Lusitania's Manifest, 1915") -- splitting that on
+    ':' yields the whole noisy line and Commons misses. Anchor a short on its PARENT's
+    clean event title instead."""
     from ..db.models import Topic  # local import: avoids widening module deps for one lookup
 
     try:
         with SessionLocal() as s:
             video = s.get(Video, video_id)
+            if video and video.parent_id:  # short -> anchor on the parent's event title
+                video = s.get(Video, video.parent_id)
             topic = s.get(Topic, video.topic_id) if video and video.topic_id else None
             title = (topic.title if topic else (video.title if video else "")) or ""
     except Exception as exc:  # noqa: BLE001 - anchor là gia vị, thiếu nó tier vẫn chạy bằng keywords
