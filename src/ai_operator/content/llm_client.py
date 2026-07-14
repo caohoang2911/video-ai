@@ -45,8 +45,17 @@ def complete(
     step: str = "llm_complete",
     video_id: int | None = None,
 ) -> str:
-    """Call Claude; fall back to Gemini on any Anthropic failure. Returns raw text."""
-    if settings.ANTHROPIC_API_KEY:
+    """Call the primary LLM; fall back to Gemini on any failure. Returns raw text.
+
+    Primary is the OpenAI-compatible gateway when LLM_GATEWAY_URL is set (opt-in), else
+    the official Anthropic API. Enabling the gateway routes THROUGH it (the official key
+    path is not also tried) — that's the point of the toggle."""
+    if settings.LLM_GATEWAY_URL:
+        try:
+            return _complete_gateway(system, user, max_tokens=max_tokens, step=step, video_id=video_id)
+        except Exception as exc:  # noqa: BLE001 - any provider error should trigger fallback, not crash the run
+            log.warning("LLM gateway call failed (%s) — falling back to Gemini", exc)
+    elif settings.ANTHROPIC_API_KEY:
         try:
             return _complete_anthropic(system, user, max_tokens=max_tokens, step=step, video_id=video_id)
         except Exception as exc:  # noqa: BLE001 - any provider error should trigger fallback, not crash the run
@@ -54,6 +63,45 @@ def complete(
     if settings.GEMINI_API_KEY:
         return _complete_gemini(system, user, max_tokens=max_tokens, step=step, video_id=video_id)
     raise LLMError("No LLM provider configured: set ANTHROPIC_API_KEY or GEMINI_API_KEY")
+
+
+def _complete_gateway(system: str, user: str, *, max_tokens: int, step: str, video_id: int | None) -> str:
+    """Call an OpenAI-compatible gateway (e.g. self-hosted 9router). The gateway's own
+    pricing is unknown here, so budget metering reserves at the official Anthropic list
+    rate — conservative (over-reserves on a free tier), never under-charges the cap."""
+    from openai import OpenAI  # lazy: heavy dep, only needed when the gateway is enabled
+
+    est_in_tokens = max(1, (len(system) + len(user)) // _CHARS_PER_TOKEN)
+    estimated = estimate_step("anthropic", in_tokens=est_in_tokens, out_tokens=max_tokens)
+    ledger_id = check_and_reserve(estimated, step=step, provider="gateway", video_id=video_id, units=est_in_tokens)
+
+    client = OpenAI(
+        api_key=settings.LLM_GATEWAY_KEY or settings.ANTHROPIC_API_KEY,
+        base_url=settings.LLM_GATEWAY_URL,
+    )
+    try:
+        response = client.chat.completions.create(
+            model=settings.LLM_GATEWAY_MODEL,
+            max_tokens=_effective_max_tokens(max_tokens),
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        usage = response.usage
+        actual = estimate_step(
+            "anthropic",
+            in_tokens=usage.prompt_tokens if usage else est_in_tokens,
+            out_tokens=usage.completion_tokens if usage else max_tokens,
+        )
+    except Exception:
+        record_actual(ledger_id, 0.0)  # nothing billed on failure — release the reservation
+        raise
+    record_actual(ledger_id, actual)
+    text = response.choices[0].message.content if response.choices else None
+    if not text:
+        raise LLMError("LLM gateway returned no text")
+    return text
 
 
 def _complete_anthropic(system: str, user: str, *, max_tokens: int, step: str, video_id: int | None) -> str:

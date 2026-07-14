@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # Optional Anthropic-compatible gateway (self-hosted router/proxy). None -> official
     # api.anthropic.com. The endpoint must speak the Messages API (/v1/messages) format.
     ANTHROPIC_BASE_URL: str | None = None
+    # Optional OpenAI-compatible LLM gateway (e.g. self-hosted 9router). Set LLM_GATEWAY_URL
+    # to route script/hook generation through it instead of the official Anthropic API;
+    # unset -> official Anthropic path stays the default. The gateway speaks OpenAI
+    # /v1/chat/completions format, so model ids may carry a provider prefix (cc/…).
+    LLM_GATEWAY_URL: str | None = None
+    LLM_GATEWAY_KEY: str | None = None            # falls back to ANTHROPIC_API_KEY if unset
+    LLM_GATEWAY_MODEL: str = "cc/claude-opus-4-8"
     GEMINI_API_KEY: str | None = None
 
     # --- tts (phase 03) ---
