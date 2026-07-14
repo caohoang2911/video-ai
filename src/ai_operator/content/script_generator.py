@@ -15,10 +15,11 @@ from sqlalchemy import select
 from .. import checkpoint
 from ..config import OUTPUT_DIR
 from ..db import VideoState, assert_transition
+from ..config import settings
 from ..db.engine import SessionLocal
 from ..db.models import Topic, Video
 from ..logging_setup import get_logger
-from . import pattern_tracker, prompt_builder, topic_backlog
+from . import fact_crosscheck, pattern_tracker, prompt_builder, topic_backlog
 from .llm_client import complete, parse_json
 from .research_gate import research
 from .schema import ScriptOutput
@@ -67,6 +68,14 @@ def generate(topic: Topic) -> ScriptOutput:
         template_text=prompt_builder.load_pattern_template(pattern),
         citations=[c.model_dump() for c in research_result["citations"]],
     )
+
+    # Flag-only independent cross-check AFTER the prompt is built (so the LLM sees the raw
+    # citations, not our verdicts) but BEFORE _generate_with_retry merges them into the
+    # persisted script. Never blocks — verify() returns citations unchanged on any failure.
+    if settings.FACT_CROSSCHECK_ENABLED:
+        research_result["citations"] = fact_crosscheck.verify(
+            topic.title, topic.angle or "", research_result["citations"], video_id=video_id
+        )
 
     script = _generate_with_retry(system, user, research_result, video_id)
     _enforce_payoff_gate(video_id, script)

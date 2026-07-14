@@ -16,13 +16,19 @@ ResearchDepth = Literal["Low", "Med", "High"]
 
 
 class Citation(BaseModel):
-    """One fact + the source that backs it, produced by research_gate before scripting."""
+    """One fact + the source that backs it, produced by research_gate before scripting.
+
+    `fact_status`/`crosscheck` are the flag-only independent-verification signal (Wikipedia +
+    adversarial LLM), attached after research_gate. Optional so older scripts still validate;
+    downstream phases (tts/render/publish) never read them — they're for the human reviewer."""
 
     model_config = ConfigDict(extra="ignore")
 
     claim: str
     source: str
     verified: bool
+    fact_status: Literal["ok", "weak", "review"] | None = None
+    crosscheck: dict | None = None
 
 
 class Hook(BaseModel):
@@ -101,3 +107,7 @@ class ScriptOutput(BaseModel):
     sources: list[str] = Field(min_length=2)
     citations: list[Citation] = Field(min_length=3)
     research_depth: ResearchDepth
+    # One curiosity line (<=90 chars) rendered on the end-screen outro card while the
+    # next-video/subscribe elements are on screen. Defaulted so older scripts still load;
+    # the outro card falls back to a static line when empty.
+    outro_teaser: str = ""

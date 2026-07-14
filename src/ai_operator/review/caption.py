@@ -21,6 +21,7 @@ def build_caption(video: Video) -> str:
     duration = f"{video.duration_sec}s" if video.duration_sec else "unknown"
     snippet = (video.description or "")[:200] or "(no description)"
     research_depth = _research_depth(video.script_path)
+    fact_summary = _fact_summary(video.script_path)
     asset_count = _asset_count(video.id)
     # Surface the re-voice block up front so the reviewer knows an approval tap will bounce
     # (the callback handler hard-blocks PASS_* until `revoice` restores the brand voice).
@@ -34,6 +35,7 @@ def build_caption(video: Video) -> str:
         f"{revoice_warn}"
         f"Title: {video.title or '(untitled)'}\n"
         f"Duration: {duration}  ·  Research depth: {research_depth}  ·  Visuals: {asset_count}\n"
+        f"Fact-check: {fact_summary}\n"
         f"Tags: {tags_preview}\n\n"
         f"Description snippet:\n{snippet}\n\n"
         f"Check: audio · video · caption · policy-flags · visuals"
@@ -51,6 +53,23 @@ def _research_depth(script_path: str | None) -> str:
     except (OSError, json.JSONDecodeError):
         return "unknown"
     return data.get("research_depth", "unknown")
+
+
+def _fact_summary(script_path: str | None) -> str:
+    """`N ok / N weak / N review` from the flag-only cross-check, so the reviewer sees the
+    machine-checked confidence signal at the gate. `review` count is the one to eyeball —
+    it means Wikipedia contradicted the claim or the skeptic called it unsupported."""
+    if not script_path or not Path(script_path).exists():
+        return "n/a"
+    try:
+        data = json.loads(Path(script_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "n/a"
+    counts = {"ok": 0, "weak": 0, "review": 0, "unflagged": 0}
+    for c in data.get("citations", []):
+        counts[c.get("fact_status") or "unflagged"] = counts.get(c.get("fact_status") or "unflagged", 0) + 1
+    parts = [f"{counts[k]} {k}" for k in ("ok", "weak", "review", "unflagged") if counts[k]]
+    return " / ".join(parts) if parts else "n/a"
 
 
 def _asset_count(video_id: int) -> int:

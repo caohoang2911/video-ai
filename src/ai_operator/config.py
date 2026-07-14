@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     LLM_GATEWAY_KEY: str | None = None            # falls back to ANTHROPIC_API_KEY if unset
     LLM_GATEWAY_MODEL: str = "cc/claude-opus-4-8"
     GEMINI_API_KEY: str | None = None
+    # Flag-only independent fact cross-check (Wikipedia + adversarial LLM) after research_gate.
+    # Never blocks a video; annotates citations with fact_status for the human reviewer. Set
+    # False to skip (e.g. Wikipedia outage or to save the extra LLM call).
+    FACT_CROSSCHECK_ENABLED: bool = True
 
     # --- tts (phase 03) ---
     ELEVENLABS_API_KEY: str | None = None
