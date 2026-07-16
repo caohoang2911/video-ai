@@ -38,6 +38,21 @@ class Analytics(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class RetentionCurve(Base):
+    """Audience-retention curve buckets (YouTube Analytics `audienceWatchRatio` per
+    `elapsedVideoTimeRatio`). The API returns a cumulative snapshot, so each pull REPLACES
+    a video's rows wholesale — history would only duplicate the same converging curve."""
+
+    __tablename__ = "retention_curve"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    youtube_video_id: Mapped[str] = mapped_column(String(32), index=True)
+    elapsed_ratio: Mapped[float] = mapped_column(Float)              # 0.0-1.0 bucket position
+    watch_ratio: Mapped[float] = mapped_column(Float, default=0.0)   # can exceed 1.0 (rewatches)
+    relative_perf: Mapped[float | None] = mapped_column(Float, default=None)  # vs YT average
+    pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AppState(Base):
     """Simple KV store: daily quota used, last_publish_at, weekly_count, etc."""
 

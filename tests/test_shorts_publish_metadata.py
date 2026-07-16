@@ -43,3 +43,16 @@ def test_main_upload_body_unchanged_by_default():
     body = build_upload_body(script, publish_at_iso="2026-07-17T12:00:00Z", category_id="27")
     assert "#Shorts" not in body["snippet"]["description"]
     assert "Main hook." in body["snippet"]["description"]
+
+
+def test_short_description_adds_one_sibling_link_after_parent_link():
+    desc = build_short_description(_SHORT_SCRIPT, "PARENTID123", "SIBLING456")
+    assert "https://youtu.be/PARENTID123" in desc
+    assert "https://youtube.com/shorts/SIBLING456" in desc
+    # parent funnel link stays primary (appears before the sibling line)
+    assert desc.index("PARENTID123") < desc.index("SIBLING456")
+
+
+def test_short_description_has_no_sibling_line_by_default():
+    desc = build_short_description(_SHORT_SCRIPT, "PARENTID123")
+    assert "youtube.com/shorts/" not in desc

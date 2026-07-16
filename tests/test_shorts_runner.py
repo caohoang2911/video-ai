@@ -212,3 +212,88 @@ def test_source_images_refetches_when_parent_stills_are_duplicates(tmp_path, mon
     monkeypatch.setattr(sr, "_refetch_short_stills", lambda *a, **k: calls.__setitem__("refetch", 1))
     sr._source_short_images(6, {}, 99, short)
     assert calls == {"reuse": 0, "refetch": 1}
+
+
+# --- regen_short_visuals: re-roll one short's stills without touching siblings ----------
+
+@pytest.fixture
+def rendered_short(temp_db, tmp_path, monkeypatch):
+    """A rendered short with script.json, one stale beat image + its asset row, a music
+    asset row, and an old final.mp4 on disk."""
+    import hashlib
+
+    from ai_operator.db.models import Asset
+
+    monkeypatch.setattr(shorts_runner, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr("ai_operator.checkpoint.CHECKPOINT_DIR", tmp_path / "checkpoints")
+    with SessionLocal() as s:
+        parent = Video(state=VideoState.PUBLISHED.value, idempotency_key="main:regen", kind="main")
+        s.add(parent)
+        s.commit()
+        child = Video(state=VideoState.RENDERED.value, idempotency_key="short:regen:0",
+                      kind="short", parent_id=parent.id)
+        s.add(child)
+        s.commit()
+        cid = child.id
+    cdir = tmp_path / str(cid)
+    (cdir / "img").mkdir(parents=True)
+    (cdir / "img" / "beat_01.jpg").write_bytes(b"old-still")
+    (cdir / "final.mp4").write_bytes(b"old-render")
+    script = cdir / "script.json"
+    script.write_text(_short(1).model_dump_json(), encoding="utf-8")
+    with SessionLocal() as s:
+        s.get(Video, cid).script_path = str(script)
+        s.add(Asset(video_id=cid, kind="archival", source="wikimedia", url_or_path="old.jpg",
+                    license="CC", md5=hashlib.md5(b"old-still").hexdigest()))
+        s.add(Asset(video_id=cid, kind="music", source="library", url_or_path="m.mp3",
+                    license="CC", md5="music-md5"))
+        s.commit()
+    return cid
+
+
+def test_regen_rerolls_stills_prunes_stale_rows_and_rebuilds(rendered_short, tmp_path):
+    from ai_operator.db.models import Asset
+
+    cid = rendered_short
+
+    def fake_refetch(child_id, short):
+        img = tmp_path / str(child_id) / "img"
+        for i in range(len(short.beats)):
+            (img / f"beat_{i + 1:02d}.jpg").write_bytes(f"new-still-{i}".encode())
+
+    built: list[int] = []
+    with patch.object(shorts_runner, "_refetch_short_stills", side_effect=fake_refetch), \
+         patch.object(shorts_runner, "build_short", side_effect=lambda vid: built.append(vid) or {}):
+        shorts_runner.regen_short_visuals(cid)
+
+    assert built == [cid]
+    # the stale render is gone BEFORE rebuild -- build_short must not checkpoint-skip on it
+    assert not (tmp_path / str(cid) / "final.mp4").exists()
+    with SessionLocal() as s:
+        kinds = sorted(a.kind for a in s.query(Asset).filter_by(video_id=cid).all())
+    assert kinds == ["music"]  # replaced image row pruned; the music license row survives
+
+
+def test_regen_keeps_old_render_when_refetch_fails(rendered_short, tmp_path):
+    cid = rendered_short
+    with patch.object(shorts_runner, "_refetch_short_stills",
+                      side_effect=FileNotFoundError("no still for beats [2]")), \
+         patch.object(shorts_runner, "build_short",
+                      side_effect=AssertionError("must not rebuild after a failed fetch")), \
+         pytest.raises(FileNotFoundError):
+        shorts_runner.regen_short_visuals(cid)
+    # the only reviewable render survives a failed re-roll
+    assert (tmp_path / str(cid) / "final.mp4").exists()
+
+
+def test_regen_rejects_mains_and_post_review_states(rendered_short, temp_db):
+    with SessionLocal() as s:
+        main_id = s.query(Video).filter_by(kind="main").first().id
+    with pytest.raises(ValueError, match="shorts-only"):
+        shorts_runner.regen_short_visuals(main_id)
+
+    with SessionLocal() as s:
+        s.get(Video, rendered_short).state = VideoState.PUBLISHED.value
+        s.commit()
+    with pytest.raises(ValueError, match="pre-review"):
+        shorts_runner.regen_short_visuals(rendered_short)

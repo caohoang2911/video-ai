@@ -57,6 +57,7 @@ def publish(
         # A Short funnels viewers to its parent — publishing one before the parent is live
         # would ship a dead link, so the parent's YouTube id is a hard prerequisite.
         parent_youtube_id = None
+        sibling_youtube_id = None
         if kind == "short":
             parent_youtube_id = s.scalar(
                 select(Upload.youtube_video_id).where(Upload.video_id == parent_id)
@@ -66,6 +67,21 @@ def publish(
                     f"short {video_id}: parent video {parent_id} is not on YouTube yet — "
                     f"publish the parent first"
                 )
+            # Newest LIVE sibling short -> one description cross-link. Backward-only: the
+            # new short links an older live one; published descriptions are never edited.
+            # A sibling still scheduled in the future is skipped -- its link would 404
+            # (private) until its publish_at passes.
+            now = datetime.now(timezone.utc)
+            sibling_youtube_id = s.scalar(
+                select(Upload.youtube_video_id)
+                .join(Video, Video.id == Upload.video_id)
+                .where(
+                    Video.parent_id == parent_id, Video.id != video_id, Video.kind == "short",
+                    Upload.youtube_video_id.is_not(None),
+                    (Upload.publish_at.is_(None)) | (Upload.publish_at <= now),
+                )
+                .order_by(Upload.id.desc())
+            )
 
     cached = checkpoint.artifacts_of(video_id, _STEP)
     youtube_video_id = existing_yt_id or (cached or {}).get("youtube_video_id")
@@ -115,6 +131,7 @@ def publish(
             title_override=title_override,
             kind=kind,
             parent_youtube_id=parent_youtube_id,
+            sibling_youtube_id=sibling_youtube_id,
         )
         service = build_service()
         youtube_video_id = youtube_uploader.upload(service, video_path, body)

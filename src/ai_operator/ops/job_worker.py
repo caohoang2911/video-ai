@@ -23,10 +23,12 @@ from ..assembler.thumbnail_generator import generate as generate_thumbnails
 from ..assembler.video_builder import assemble_video
 from ..content import topic_backlog
 from ..db.engine import SessionLocal
+from ..db.models import Video
 from ..db.models_ops import Job
 from ..logging_setup import get_logger
 from ..media import commands as media_commands
 from ..publisher.publish import publish
+from ..web import job_queue
 from . import analytics_puller, pipeline_runner
 
 log = get_logger("ops.job_worker")
@@ -61,19 +63,36 @@ def _gen_audio(job: Job) -> None:
 
 
 def _gen_visuals(job: Job) -> None:
+    video_id = _require_video(job)
+    with SessionLocal() as s:
+        video = s.get(Video, video_id)
+    if video is not None and video.kind == "short":
+        # A short's script has `beats`, not the `shot_list` the main gen-visuals command
+        # reads — its stills re-roll through the shorts pipeline instead.
+        from . import shorts_runner  # local import: shorts pull in LLM/render deps lazily
+
+        shorts_runner.regen_short_visuals(video_id)
+        return
     # typer trap: calling a typer command as a plain function leaves unpassed options as
     # OptionInfo objects — which are TRUTHY. `gen_all` unset therefore silently forced
     # every queued gen-visuals run into all-SDXL mode (skipping archival/stock tiers),
     # so every option must be passed explicitly here.
     media_commands.gen_visuals(
-        video_id=_require_video(job),
+        video_id=video_id,
         motion=bool(_param(job, "motion", False)),
         gen_all=bool(_param(job, "gen_all", False)),
     )
 
 
 def _revoice(job: Job) -> None:
-    media_commands.revoice(video_id=_require_video(job))
+    video_id = _require_video(job)
+    media_commands.revoice(video_id=video_id)
+    # revoice tears down final.mp4 on purpose (the old voice is baked in), so the natural
+    # next step is ALWAYS a re-render -- chain it here instead of leaving the operator with
+    # an empty preview and a manual step to remember. Only reached when revoice actually
+    # succeeded (an ElevenLabs miss raises above and never gets here). Enqueue dedups, so a
+    # racing manual click can't double-render. CLI runs keep the manual flow (echo says so).
+    job_queue.enqueue("assemble", video_id=video_id)
 
 
 def _assemble(job: Job) -> None:

@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from ..config import settings
 from ..db.engine import SessionLocal
 from ..db.models import Upload
-from ..db.models_ops import Analytics
+from ..db.models_ops import Analytics, RetentionCurve
 from ..logging_setup import get_logger
 from . import channel_stats
 
@@ -25,6 +25,11 @@ _METRICS = "views,estimatedMinutesWatched,averageViewPercentage"
 # missing for a fresh/low-reach upload, and keeping it off the core query means such a video
 # still records views/retention instead of the whole pull failing on a CTR-metric quirk.
 _CTR_METRICS = "impressions,impressionsClickThroughRate"
+# Bucketed retention curve (which SECOND loses viewers, not just the average). Optional like
+# CTR: only queried once a video has enough traffic for the curve to mean anything — below
+# the threshold the buckets are a handful of sessions, pure noise, and a wasted API call.
+_RETENTION_METRICS = "audienceWatchRatio,relativeRetentionPerformance"
+RETENTION_MIN_VIEWS = 200
 
 
 def _service():
@@ -67,6 +72,37 @@ def _query_ctr(service, youtube_video_id: str, as_of: date) -> float | None:
         return None
     ctr = (rows[0] + [0, 0])[1]  # row = [impressions, impressionsClickThroughRate]
     return float(ctr)
+
+
+def _query_retention(service, youtube_video_id: str, as_of: date) -> list[dict]:
+    """Retention buckets for one video: [{elapsed_ratio, watch_ratio, relative_perf}].
+    Optional like CTR — any failure or empty result returns [] and the core pull goes on."""
+    try:
+        resp = service.reports().query(
+            ids="channel==MINE", startDate="2005-01-01", endDate=as_of.isoformat(),
+            metrics=_RETENTION_METRICS, dimensions="elapsedVideoTimeRatio",
+            filters=f"video=={youtube_video_id}",
+        ).execute()
+    except Exception as exc:  # noqa: BLE001 - curve is optional; never break the core pull
+        log.info("analytics: retention curve unavailable for %s: %s", youtube_video_id, exc)
+        return []
+    out = []
+    for row in resp.get("rows") or []:
+        row = list(row) + [None, None]
+        out.append({
+            "elapsed_ratio": float(row[0]),
+            "watch_ratio": float(row[1] or 0.0),
+            "relative_perf": None if row[2] is None else float(row[2]),
+        })
+    return out
+
+
+def _replace_curve(youtube_video_id: str, points: list[dict]) -> None:
+    """Swap a video's curve rows for the fresh snapshot in one transaction."""
+    with SessionLocal() as s:
+        s.execute(delete(RetentionCurve).where(RetentionCurve.youtube_video_id == youtube_video_id))
+        s.add_all(RetentionCurve(youtube_video_id=youtube_video_id, **p) for p in points)
+        s.commit()
 
 
 def _upsert(youtube_video_id: str, as_of: date, metrics: dict) -> None:
@@ -113,6 +149,10 @@ def pull_all(as_of: date | None = None) -> int:
                 metrics["ctr"] = ctr
             _upsert(yt_id, as_of, metrics)  # inside the try -> one video's write failure can't abort the rest
             written += 1
+            if metrics["views"] >= RETENTION_MIN_VIEWS:
+                points = _query_retention(service, yt_id, as_of)
+                if points:
+                    _replace_curve(yt_id, points)
         except Exception as exc:  # noqa: BLE001
             log.warning("analytics update failed for %s: %s", yt_id, exc)
 

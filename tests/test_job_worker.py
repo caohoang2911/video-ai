@@ -91,7 +91,36 @@ def test_claim_flips_pending_to_running(temp_db, monkeypatch):
     assert seen == ["running"]
 
 
-def test_gen_visuals_handler_passes_every_typer_option_explicitly(monkeypatch):
+def test_revoice_success_chains_assemble(temp_db, monkeypatch):
+    """revoice tears down final.mp4 (old voice is baked in), so a queued revoice must
+    auto-enqueue the re-render instead of leaving the operator with an empty preview."""
+    monkeypatch.setattr(job_worker.media_commands, "revoice", lambda **kw: None)
+    job = Job(command="revoice", video_id=5, status="running", idempotency_key="k-revoice-chain")
+
+    job_worker._revoice(job)
+
+    with SessionLocal() as s:
+        chained = s.query(Job).filter_by(command="assemble", video_id=5).all()
+    assert len(chained) == 1 and chained[0].status == "pending"
+
+
+def test_revoice_failure_does_not_chain_assemble(temp_db, monkeypatch):
+    """An ElevenLabs miss leaves the render/state untouched — nothing new to assemble."""
+    def _boom(**kw):
+        raise RuntimeError("elevenlabs still unavailable")
+
+    monkeypatch.setattr(job_worker.media_commands, "revoice", _boom)
+    revoice_id = _seed("revoice", video_id=5)
+
+    job_worker.drain_jobs()  # never raises; failure stays on the revoice job
+
+    with SessionLocal() as s:
+        rows = {j.command: j for j in s.query(Job).all()}
+    assert rows["revoice"].id == revoice_id and rows["revoice"].status == "failed"
+    assert "assemble" not in rows
+
+
+def test_gen_visuals_handler_passes_every_typer_option_explicitly(temp_db, monkeypatch):
     """Calling a typer command as a plain function leaves unpassed options as OptionInfo
     objects, which are TRUTHY — an unset `gen_all` silently forced every queued
     gen-visuals run into all-SDXL mode (skipping the archival/stock tiers). The handler
@@ -107,3 +136,29 @@ def test_gen_visuals_handler_passes_every_typer_option_explicitly(monkeypatch):
     assert captured["video_id"] == 7
     assert captured["motion"] is False
     assert captured["gen_all"] is False   # bool thật, không phải OptionInfo truthy
+
+
+def test_gen_visuals_routes_shorts_to_the_shorts_pipeline(temp_db, monkeypatch):
+    """A short's script has `beats`, not `shot_list` — the main gen-visuals command KeyErrors
+    on it, so the handler must dispatch shorts to shorts_runner.regen_short_visuals."""
+    from ai_operator.db.models import Video
+
+    with SessionLocal() as s:
+        v = Video(state="rendered", idempotency_key="short:jw:0", kind="short")
+        s.add(v)
+        s.commit()
+        vid = v.id
+
+    regen_calls: list[int] = []
+    monkeypatch.setattr(
+        "ai_operator.ops.shorts_runner.regen_short_visuals",
+        lambda video_id: regen_calls.append(video_id),
+    )
+    monkeypatch.setattr(
+        job_worker.media_commands, "gen_visuals",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("main path must not run for a short")),
+    )
+    job = Job(command="gen-visuals", video_id=vid, params={}, status="running",
+              idempotency_key="k-genvis-short-route")
+    job_worker._gen_visuals(job)
+    assert regen_calls == [vid]

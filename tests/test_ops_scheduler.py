@@ -117,3 +117,79 @@ def test_publish_job_publishes_short_while_mains_throttled(monkeypatch):
     )
     scheduler.publish_job()
     assert published == [42]  # short rides past the weekly cap
+
+
+# --------------------------------------------------------------------------------------
+# sibling-shorts publish spacing (>= SHORT_SIBLING_GAP_HOURS between shorts of one parent)
+# --------------------------------------------------------------------------------------
+
+
+def _seed_family(now):
+    """Parent (published) + short A (live, publish_at=now-2h) + shorts B/C (approved)."""
+    from ai_operator.db.engine import SessionLocal
+    from ai_operator.db.models import Upload, Video
+    from ai_operator.db.state_machine import VideoState
+
+    with SessionLocal() as s:
+        parent = Video(state=VideoState.PUBLISHED.value, idempotency_key="sp:p", kind="main")
+        s.add(parent)
+        s.commit()
+        a = Video(state=VideoState.PUBLISHED.value, idempotency_key="sp:a", kind="short",
+                  parent_id=parent.id)
+        b = Video(state=VideoState.APPROVED.value, idempotency_key="sp:b", kind="short",
+                  parent_id=parent.id)
+        c = Video(state=VideoState.APPROVED.value, idempotency_key="sp:c", kind="short",
+                  parent_id=parent.id)
+        s.add_all([a, b, c])
+        s.commit()
+        s.add(Upload(video_id=a.id, youtube_video_id="ytA", status="published",
+                     publish_at=now - timedelta(hours=2)))
+        s.commit()
+        return b.id, c.id
+
+
+def test_short_is_skipped_while_sibling_published_within_gap(temp_db):
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    _seed_family(now)
+    assert scheduler._next_approved_video_id(include_main=False, now=now) is None
+
+
+def test_short_becomes_eligible_after_the_gap(temp_db):
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    b_id, _ = _seed_family(now)
+    later = now + timedelta(hours=scheduler.SHORT_SIBLING_GAP_HOURS)
+    assert scheduler._next_approved_video_id(include_main=False, now=later) == b_id
+
+
+def test_short_of_another_parent_is_not_blocked(temp_db):
+    from ai_operator.db.engine import SessionLocal
+    from ai_operator.db.models import Video
+    from ai_operator.db.state_machine import VideoState
+
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    _seed_family(now)
+    with SessionLocal() as s:
+        other_parent = Video(state=VideoState.PUBLISHED.value, idempotency_key="sp:p2", kind="main")
+        s.add(other_parent)
+        s.commit()
+        d = Video(state=VideoState.APPROVED.value, idempotency_key="sp:d", kind="short",
+                  parent_id=other_parent.id)
+        s.add(d)
+        s.commit()
+        d_id = d.id
+    assert scheduler._next_approved_video_id(include_main=False, now=now) == d_id
+
+
+def test_scheduled_future_sibling_also_blocks(temp_db):
+    """A sibling scheduled to go live soon (publish_at in the future) must block too --
+    otherwise two siblings can end up live within minutes of each other."""
+    from ai_operator.db.engine import SessionLocal
+    from ai_operator.db.models import Upload
+
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    _seed_family(now)
+    with SessionLocal() as s:
+        up = s.query(Upload).filter_by(youtube_video_id="ytA").one()
+        up.publish_at = now + timedelta(hours=3)
+        s.commit()
+    assert scheduler._next_approved_video_id(include_main=False, now=now) is None

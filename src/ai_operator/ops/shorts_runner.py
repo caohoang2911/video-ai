@@ -18,7 +18,9 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
+from .. import checkpoint
 from ..config import CHECKPOINT_DIR, OUTPUT_DIR, settings
+from ..content.short_schema import ShortScript
 from ..content.short_script_generator import generate_short_scripts
 from ..db import SessionLocal, VideoState, assert_transition
 from ..db.state_machine import can_transition
@@ -35,6 +37,13 @@ SHORTS_PER_VIDEO = 3
 _DISCARDABLE = frozenset(
     s.value for s in VideoState if s not in (VideoState.PUBLISHED, VideoState.ANALYZED)
 )
+# Cross-phase checkpoint keys, referenced by string (same convention as media.commands):
+# importing visual_fetcher/video_builder at module scope for their STEP constants would
+# drag heavy CLIP/torch/render deps into every shorts import.
+_VISUAL_STEP = "visual_fetch"
+_ASSEMBLE_STEP = "assemble"
+# Asset kinds that carry a beat still's license record (vs music / video_broll rows).
+_IMAGE_ASSET_KINDS = ("stock", "archival", "gen")
 
 
 def generate_shorts(parent_video_id: int, *, force: bool = False) -> list[int]:
@@ -74,6 +83,44 @@ def generate_shorts(parent_video_id: int, *, force: bool = False) -> list[int]:
         except Exception as exc:  # noqa: BLE001 - one bad short must not abort the others
             log.error("short %s/%s for parent %s failed: %s", i + 1, len(shorts), parent_video_id, exc)
     return child_ids
+
+
+def regen_short_visuals(child_id: int) -> None:
+    """Re-roll the stills of ONE short and re-render it, leaving its siblings untouched.
+
+    The md5 ledger (this short's asset rows) is deliberately KEPT during the fetch:
+    asset_store dedups new downloads against it, which forces every beat onto an image the
+    short has never used — without that, the deterministic tier ranking would re-pick the
+    exact stills the operator wants replaced. Rows whose image no longer backs any beat
+    file are pruned AFTER the fetch so the license/credit audit keeps matching what is
+    actually on screen. Teardown order mirrors `revoice`: the old final.mp4 survives until
+    every beat has a fresh still, so a failed fetch never destroys the only reviewable render.
+    """
+    with SessionLocal() as s:
+        child = s.get(Video, child_id)
+        if child is None:
+            raise ValueError(f"video {child_id} not found")
+        if child.kind != "short":
+            raise ValueError(f"video {child_id} is kind={child.kind}; regen_short_visuals is shorts-only")
+        state, script_path = child.state, child.script_path
+    if state not in (VideoState.VOICED.value, VideoState.RENDERED.value):
+        raise ValueError(
+            f"short {child_id} state={state}: stills only re-roll pre-review (voiced/rendered)"
+        )
+    if not script_path or not Path(script_path).exists():
+        raise ValueError(f"short {child_id} has no script.json")
+    short = ShortScript.model_validate_json(Path(script_path).read_text(encoding="utf-8"))
+
+    # Without this, acquire() sees the old visual_fetch checkpoint and skips the fetch outright.
+    checkpoint.invalidate(child_id, _VISUAL_STEP)
+    _refetch_short_stills(child_id, short)
+    _prune_stale_image_assets(child_id)
+
+    # Only now that every beat landed: drop the stale render (old stills are baked in) and rebuild.
+    (OUTPUT_DIR / str(child_id) / "final.mp4").unlink(missing_ok=True)
+    checkpoint.invalidate(child_id, _ASSEMBLE_STEP)
+    build_short(child_id)
+    log.info("short %s: stills re-rolled and re-rendered", child_id)
 
 
 def _produce_one(
@@ -237,6 +284,29 @@ def _refetch_short_stills(child_id: int, short) -> None:
     ]
     if missing:
         raise FileNotFoundError(f"short {child_id}: no still for beats {missing} after re-fetch")
+
+
+def _prune_stale_image_assets(child_id: int) -> None:
+    """Drop image asset rows whose content no longer backs any img/beat_XX.jpg. After a
+    re-roll they would otherwise keep licensing/crediting images that left the video —
+    publish reads these rows to build the archival credit block in the description."""
+    img_dir = OUTPUT_DIR / str(child_id) / "img"
+    current: set[str] = set()
+    for p in img_dir.glob("beat_*.jpg"):
+        try:
+            current.add(hashlib.md5(p.read_bytes()).hexdigest())
+        except OSError:
+            continue
+    with SessionLocal() as s:
+        rows = s.scalars(
+            select(Asset).where(Asset.video_id == child_id, Asset.kind.in_(_IMAGE_ASSET_KINDS))
+        ).all()
+        stale = [r for r in rows if r.md5 not in current]
+        for row in stale:
+            s.delete(row)
+        s.commit()
+    if stale:
+        log.info("short %s: pruned %s replaced image asset rows", child_id, len(stale))
 
 
 def _reuse_parent_images(

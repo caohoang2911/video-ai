@@ -19,7 +19,7 @@ from sqlalchemy import select
 from ..config import settings
 from ..cost import elevenlabs_char_guard as char_guard
 from ..db.engine import SessionLocal
-from ..db.models import Video
+from ..db.models import Upload, Video
 from ..db.state_machine import VideoState
 from ..logging_setup import get_logger
 from ..publisher import quota_throttle
@@ -58,9 +58,36 @@ def publish_skip_reason() -> str | None:
     return None
 
 
-def _next_approved_video_id(*, include_main: bool = True) -> int | None:
+# Shorts of one parent are spread out so each gets its own feed test window instead of
+# the batch cannibalizing a single audience push.
+SHORT_SIBLING_GAP_HOURS = 24
+
+
+def _sibling_within_gap(s, video: Video, now: datetime) -> bool:
+    """True when another short of the same parent went live -- or is scheduled to -- inside
+    the spacing window. An uploaded sibling without a publish_at has unknown timing and is
+    ignored rather than blocking the queue forever."""
+    if video.parent_id is None:
+        return False
+    cutoff = now - timedelta(hours=SHORT_SIBLING_GAP_HOURS)
+    return s.scalar(
+        select(Upload.id)
+        .join(Video, Video.id == Upload.video_id)
+        .where(
+            Video.parent_id == video.parent_id, Video.id != video.id, Video.kind == "short",
+            Upload.youtube_video_id.is_not(None),
+            Upload.publish_at.is_not(None), Upload.publish_at > cutoff,
+        )
+        .limit(1)
+    ) is not None
+
+
+def _next_approved_video_id(*, include_main: bool = True, now: datetime | None = None) -> int | None:
     """Oldest approved video ready to upload; `include_main=False` restricts the scan
-    to shorts (used while the weekly cadence cap has mains throttled)."""
+    to shorts (used while the weekly cadence cap has mains throttled). A short whose
+    sibling published within SHORT_SIBLING_GAP_HOURS is passed over this scan (later
+    candidates still get their turn)."""
+    now = now or datetime.now(timezone.utc)
     with SessionLocal() as s:
         stmt = (
             select(Video)
@@ -69,8 +96,11 @@ def _next_approved_video_id(*, include_main: bool = True) -> int | None:
         )
         if not include_main:
             stmt = stmt.where(Video.kind == "short")
-        v = s.scalar(stmt)
-        return v.id if v else None
+        for v in s.scalars(stmt):
+            if v.kind == "short" and _sibling_within_gap(s, v, now):
+                continue
+            return v.id
+    return None
 
 
 def produce_job() -> None:

@@ -22,17 +22,21 @@ class BudgetExceeded(Exception):
     """Raised when an estimated cost would exceed the remaining monthly budget."""
 
 
+# Spend rule: actual cost once recorded, else the reserved estimate. Shared with the
+# web cost page (web.costs_view) so displayed totals can't drift from what is enforced.
+SPENT_EXPR = func.coalesce(
+    func.sum(func.coalesce(CostLedger.actual_cost, CostLedger.estimated_cost)), 0.0
+)
+
+
 def current_ym() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
 def month_spent(ym: str | None = None) -> float:
     ym = ym or current_ym()
-    spent_expr = func.coalesce(
-        func.sum(func.coalesce(CostLedger.actual_cost, CostLedger.estimated_cost)), 0.0
-    )
     with SessionLocal() as s:
-        total = s.scalar(select(spent_expr).where(CostLedger.ym == ym))
+        total = s.scalar(select(SPENT_EXPR).where(CostLedger.ym == ym))
     return float(total or 0.0)
 
 

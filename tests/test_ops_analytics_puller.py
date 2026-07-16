@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from ai_operator.db.base import Base
-from ai_operator.db.models_ops import Analytics
+from ai_operator.db.models_ops import Analytics, RetentionCurve
 from ai_operator.ops import analytics_puller as ap
 
 _AS_OF = date(2026, 7, 1)
@@ -113,3 +113,38 @@ def test_upsert_measured_ctr_survives_a_later_unmeasured_pull(tmp_path, monkeypa
     with Session() as s:
         row = s.scalar(select(Analytics).where(Analytics.youtube_video_id == "v3"))
     assert row.views == 150 and row.ctr == 5.5
+
+
+# --------------------------------------------------------------------------------------
+# retention curve: parsing + wholesale replace + graceful fallback
+# --------------------------------------------------------------------------------------
+
+
+def test_query_retention_parses_bucket_rows():
+    svc = _FakeService(resp={"rows": [[0.01, 0.95, 1.1], [0.02, 0.88]]})
+    pts = ap._query_retention(svc, "v1", _AS_OF)
+    assert pts[0] == {"elapsed_ratio": 0.01, "watch_ratio": 0.95, "relative_perf": 1.1}
+    assert pts[1] == {"elapsed_ratio": 0.02, "watch_ratio": 0.88, "relative_perf": None}
+
+
+def test_query_retention_empty_or_error_never_breaks_the_pull():
+    assert ap._query_retention(_FakeService(resp={}), "v1", _AS_OF) == []
+    assert ap._query_retention(_FakeService(exc=RuntimeError("restricted")), "v1", _AS_OF) == []
+
+
+def test_replace_curve_swaps_rows_wholesale(tmp_path, monkeypatch):
+    Session = _session_factory(tmp_path)
+    monkeypatch.setattr(ap, "SessionLocal", Session)
+    ap._replace_curve("v1", [{"elapsed_ratio": 0.01, "watch_ratio": 1.0, "relative_perf": None}])
+    ap._replace_curve("v1", [
+        {"elapsed_ratio": 0.01, "watch_ratio": 0.9, "relative_perf": 1.0},
+        {"elapsed_ratio": 0.02, "watch_ratio": 0.8, "relative_perf": None},
+    ])
+    # another video's curve must be untouched by v1's replace
+    ap._replace_curve("v2", [{"elapsed_ratio": 0.01, "watch_ratio": 0.5, "relative_perf": None}])
+    with Session() as s:
+        v1 = s.scalars(select(RetentionCurve).where(RetentionCurve.youtube_video_id == "v1")
+                       .order_by(RetentionCurve.elapsed_ratio)).all()
+        n_all = len(s.scalars(select(RetentionCurve)).all())
+    assert [r.watch_ratio for r in v1] == [0.9, 0.8]  # old snapshot fully replaced
+    assert n_all == 3

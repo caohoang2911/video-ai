@@ -83,15 +83,20 @@ def build_description(
     return "\n\n".join(p for p in parts if p)[:MAX_DESCRIPTION_LEN]
 
 
-def build_short_description(script: dict, parent_youtube_id: str | None) -> str:
-    """Description for a child Short: curiosity line + parent-video funnel link + #Shorts
-    above the reference block; AI disclosure kept; remaining hashtags stay last."""
+def build_short_description(
+    script: dict, parent_youtube_id: str | None, sibling_youtube_id: str | None = None
+) -> str:
+    """Description for a child Short: curiosity line + parent-video funnel link + at most
+    ONE sibling-short link (more reads as link spam; the parent link stays the primary
+    funnel) + #Shorts above the reference block; AI disclosure kept; hashtags stay last."""
     parts: list[str] = []
     question = (script.get("curiosity_question") or "").strip()
     if question:
         parts.append(question)
     if parent_youtube_id:
         parts.append(f"▶ Full video: https://youtu.be/{parent_youtube_id}")
+    if sibling_youtube_id:
+        parts.append(f"More on this story: https://youtube.com/shorts/{sibling_youtube_id}")
     parts.append("#Shorts")
     # CC BY attribution is a license requirement wherever the track is used — the picker
     # writes the exact credit line into the short's script.json at render time
@@ -124,6 +129,7 @@ def build_upload_body(
     title_override: str | None = None,
     kind: str = "main",
     parent_youtube_id: str | None = None,
+    sibling_youtube_id: str | None = None,
 ) -> dict:
     """Assemble the `videos.insert` request body.
 
@@ -134,7 +140,7 @@ def build_upload_body(
     AI-generated-content label.
     """
     description = (
-        build_short_description(script, parent_youtube_id)
+        build_short_description(script, parent_youtube_id, sibling_youtube_id)
         if kind == "short"
         else build_description(script)
     )
