@@ -104,7 +104,10 @@ def _download_thumb(url: str, dest: Path) -> Path | None:
     if not url:
         return None
     try:
-        r = requests.get(url, timeout=STOCK_TIMEOUT_SEC)
+        # Commons thumbnails live on upload.wikimedia.org, which 429s requests without a
+        # descriptive User-Agent (Wikimedia UA policy). CLIP reranking pulls MANY thumbs per
+        # beat, so a missing UA here is the biggest source of archival rate-limiting.
+        r = requests.get(url, timeout=STOCK_TIMEOUT_SEC, headers={"User-Agent": stock_clients._COMMONS_UA})
         r.raise_for_status()
         dest.write_bytes(r.content)
         return dest
@@ -113,15 +116,27 @@ def _download_thumb(url: str, dest: Path) -> Path | None:
         return None
 
 
+# Rerank only the leading candidates, paced. Wikimedia's file server (upload.wikimedia.org)
+# throttles rapid bursts with 429; downloading a thumbnail for every candidate back-to-back
+# trips it, and the real archival image download is then refused. The Commons search already
+# orders by relevance, so CLIP only needs the top few to pick a winner -- a small cap plus a
+# gap between fetches keeps us under the limit.
+_RERANK_MAX = 4
+_COMMONS_PACE_SEC = 1.2
+
+
 def _rank_candidates(text: str, candidates: list[dict]) -> list[dict]:
     """Reorder candidates most-relevant-first by CLIP-scoring each preview thumbnail against
     `text`. No-op (original provider order) when CLIP is unavailable, there's nothing to rank,
     or thumbnails can't be fetched -- so relevance ranking only ever helps, never blocks."""
     if len(candidates) <= 1 or not text or not clip_reranker.available():
         return candidates
+    head, tail = candidates[:_RERANK_MAX], candidates[_RERANK_MAX:]
     with tempfile.TemporaryDirectory() as td:
         thumbs, ranked_idx = [], []
-        for i, c in enumerate(candidates):
+        for i, c in enumerate(head):
+            if i:
+                time.sleep(_COMMONS_PACE_SEC)  # pace the burst under Wikimedia's rate limit
             p = _download_thumb(c.get("thumb", ""), Path(td) / f"t{i}.jpg")
             if p is not None:
                 thumbs.append(p)
@@ -129,10 +144,10 @@ def _rank_candidates(text: str, candidates: list[dict]) -> list[dict]:
         if len(thumbs) <= 1:
             return candidates
         order = clip_reranker.rank(text, thumbs)  # indices into thumbs/ranked_idx
-        ranked = [candidates[ranked_idx[o]] for o in order]
-    # candidates whose thumbnail failed to download stay usable, appended after the ranked ones
-    ranked += [c for i, c in enumerate(candidates) if i not in ranked_idx]
-    return ranked
+        ranked = [head[ranked_idx[o]] for o in order]
+        # head candidates whose thumb failed, then the un-reranked tail, keep provider order
+        ranked += [head[i] for i in range(len(head)) if i not in ranked_idx] + tail
+        return ranked
 
 
 def _archival_anchor(video_id: int) -> str:

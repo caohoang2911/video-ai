@@ -7,7 +7,7 @@ and fal-client not installed (the CLI imports `visual_fetcher` -> this module on
 
 from __future__ import annotations
 
-import asyncio
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -21,7 +21,10 @@ from ..logging_setup import get_logger
 
 log = get_logger("cloud_flux")
 
-FAL_MODEL = "fal-ai/flux-dev"
+# fal.ai routes Flux.1 [dev] at `fal-ai/flux/dev` (namespace/app/variant). The old
+# `fal-ai/flux-dev` parsed as an app literally named "flux-dev", which fal rejects with
+# "Application 'flux-dev' not found" -- so every generation failed.
+FAL_MODEL = "fal-ai/flux/dev"
 _BACKOFF_SEC = (0, 2, 4, 8)  # first attempt has no delay
 _DOWNLOAD_TIMEOUT_SEC = 30
 
@@ -35,6 +38,10 @@ def generate(prompt: str, *, is_diagram: bool = True, video_id: int | None = Non
     """Generate one image via fal.ai flux-dev; returns a local temp file (caller persists it)."""
     if not settings.FAL_KEY:
         raise RuntimeError("cloud_flux: FAL_KEY not configured")
+    # fal_client authenticates from the FAL_KEY OS env var, but our key lives in settings
+    # (loaded from .env) and isn't necessarily exported to the process env -- propagate it,
+    # else fal_client raises "No credentials found" even though FAL_KEY is configured.
+    os.environ["FAL_KEY"] = settings.FAL_KEY
 
     try:
         import fal_client  # optional "cloud" extra -- only imported once this tier is reached
@@ -52,7 +59,10 @@ def generate(prompt: str, *, is_diagram: bool = True, video_id: int | None = Non
         if delay:
             time.sleep(delay)
         try:
-            result = asyncio.run(fal_client.run_async(FAL_MODEL, arguments={"prompt": full_prompt}))
+            # Sync API, NOT asyncio.run(run_async(...)): asyncio.run creates then CLOSES a
+            # fresh event loop each retry, but fal_client caches a global async HTTP client
+            # bound to the first loop -- later retries then hit "Event loop is closed".
+            result = fal_client.run(FAL_MODEL, arguments={"prompt": full_prompt})
             url = result["images"][0]["url"]
             path = _download(url)
             record_actual(ledger_id, estimated)

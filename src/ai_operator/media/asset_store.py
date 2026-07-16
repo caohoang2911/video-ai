@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from ..config import OUTPUT_DIR
 from ..db.engine import SessionLocal
-from ..db.models import Asset
+from ..db.models import Asset, Video
 from ..logging_setup import get_logger
 from . import video_normalize
 
@@ -56,8 +56,20 @@ def _md5_bytes(data: bytes) -> str:
 
 
 def _existing_md5s(video_id: int) -> set[str]:
+    """Md5s a new save must not duplicate. A MAIN video dedups against its own assets (no
+    two beats share one image). A SHORT dedups against its whole FAMILY — parent plus every
+    sibling: sibling shorts refetch from the same Commons pool with near-identical queries,
+    so without the family scope they all pick the same top-ranked photos and the batch
+    reads as duplicates in the feed."""
     with SessionLocal() as s:
-        rows = s.execute(select(Asset.md5).where(Asset.video_id == video_id)).scalars().all()
+        ids = [video_id]
+        video = s.get(Video, video_id)
+        if video is not None and video.parent_id is not None:
+            siblings = s.execute(
+                select(Video.id).where(Video.parent_id == video.parent_id)
+            ).scalars().all()
+            ids = [video.parent_id, *siblings]
+        rows = s.execute(select(Asset.md5).where(Asset.video_id.in_(ids))).scalars().all()
     return {r for r in rows if r}
 
 
@@ -99,14 +111,25 @@ def save_archival(
     triple `license | artist | file page URL` -- the publish phase splits it to build the
     description credit line. Returns None on duplicate/failed download."""
     resp = None
-    for attempt in (1, 2):  # upload.wikimedia.org rate-limits bursts: one polite retry
+    # upload.wikimedia.org (Varnish) throttles bursts with 429 + a Retry-After hint. The
+    # CLIP-rerank thumbnail burst just before this call routinely trips it, so ONE retry
+    # isn't enough -- respect Retry-After and back off a few times. The window drains in
+    # ~10s, so paced retries recover the real photo instead of falling through to generation.
+    # Full descriptive UA per Wikimedia policy (a bare "ai-operator/0.1" is throttled harder).
+    headers = {"User-Agent": "ai-operator/0.1 (self-hosted documentary pipeline)"}
+    for attempt in range(4):
         try:
-            resp = requests.get(url, timeout=10, headers={"User-Agent": "ai-operator/0.1"})
+            resp = requests.get(url, timeout=15, headers=headers)
             resp.raise_for_status()
             break
         except Exception as exc:
-            if attempt == 1 and "429" in str(exc):
-                time.sleep(5)
+            throttled = getattr(resp, "status_code", None) == 429 or "429" in str(exc)
+            if throttled and attempt < 3:
+                try:
+                    retry_after = int((getattr(resp, "headers", {}) or {}).get("Retry-After", "10"))
+                except (TypeError, ValueError):
+                    retry_after = 10
+                time.sleep(min(max(retry_after, 5), 15) + 2)
                 continue
             log.warning("beat %s: archival download failed: %s", beat_id, exc)
             return None

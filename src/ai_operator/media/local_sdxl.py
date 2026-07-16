@@ -35,11 +35,23 @@ def _load_pipeline():
         return _pipeline
     import torch
     from diffusers import StableDiffusionXLPipeline
+    from huggingface_hub import try_to_load_from_cache
+
+    # Load from the local snapshot DIRECTORY when the weights are cached. Passing the repo id
+    # instead makes `from_pretrained` phone the Hub (a transient 5xx then wrongly reports the
+    # model "is not cached locally"), and `local_files_only=True` runs a strict completeness
+    # check that trips on doc/example files (LICENSE, sample PNGs) the weights were never
+    # downloaded with. A direct folder path loads exactly the components present -- no network,
+    # no completeness check. Only a machine that never downloaded SDXL falls through to the id.
+    cached_index = try_to_load_from_cache(MODEL_ID, "model_index.json")
+    source = str(Path(cached_index).parent) if isinstance(cached_index, str) else MODEL_ID
+    if source == MODEL_ID:
+        log.info("SDXL not in local cache -- downloading weights from the Hub (first run)")
 
     # float32, not float16: SDXL's VAE decode overflows to NaN in fp16 on the MPS backend for
     # some seeds/prompts, producing all-black frames. fp32 is ~2x slower but numerically stable
     # on Apple Silicon (M1 Max 64GB has the headroom); attention slicing keeps peak memory down.
-    pipe = StableDiffusionXLPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.float32)
+    pipe = StableDiffusionXLPipeline.from_pretrained(source, torch_dtype=torch.float32)
     pipe = pipe.to("mps")
     pipe.enable_attention_slicing()
     _pipeline = pipe

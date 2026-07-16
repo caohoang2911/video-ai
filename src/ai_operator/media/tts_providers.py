@@ -71,7 +71,7 @@ def synthesize_elevenlabs(
             voice_id=settings.ELEVENLABS_VOICE_ID,
             text=text,
             model_id=_ELEVENLABS_MODEL,
-            output_format="mp3_44100_128",
+            output_format="mp3_44100_192",  # Creator-tier format; final encode is AAC 192k, so a 128kbps source would be the chain's bottleneck
             voice_settings={
                 "stability": 0.6,
                 "similarity_boost": 0.8,
