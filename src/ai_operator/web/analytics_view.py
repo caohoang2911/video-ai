@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from ..db.engine import SessionLocal
+from ..db.models import Upload, Video
 from ..db.models_ops import Analytics
 from ..ops import channel_stats
 from ..ops.health import latest_analytics_per_video  # single source for "newest per video"
@@ -22,10 +23,24 @@ def _iso(v: Any) -> Any:
     return v.isoformat() if isinstance(v, (datetime, date)) else v
 
 
-def _per_video(rows: list[Analytics]) -> list[dict]:
+def _kind_by_yt_id() -> dict[str, str]:
+    """youtube_video_id -> videos.kind (main|short) so analytics rows can be labeled.
+    Analytics rows only key on the YouTube id; the kind lives on the uploaded Video."""
+    with SessionLocal() as s:
+        return dict(
+            s.execute(
+                select(Upload.youtube_video_id, Video.kind)
+                .join(Video, Video.id == Upload.video_id)
+                .where(Upload.youtube_video_id.is_not(None))
+            ).all()
+        )
+
+
+def _per_video(rows: list[Analytics], kinds: dict[str, str]) -> list[dict]:
     return [
         {
             "youtube_video_id": a.youtube_video_id,
+            "kind": kinds.get(a.youtube_video_id),  # None when the upload row is gone
             "as_of_date": _iso(a.as_of_date),
             "views": a.views,
             "avg_view_pct": a.avg_view_pct,
@@ -71,7 +86,7 @@ def _freshness() -> dict:
 def overview() -> dict:
     """Everything the /analytics page + dashboard need, JSON-safe."""
     latest = latest_analytics_per_video()
-    per_video = _per_video(latest)
+    per_video = _per_video(latest, _kind_by_yt_id())
     ranked = sorted(per_video, key=lambda v: v["views"], reverse=True)
     return {
         "channel": channel_stats.load_channel_stats(),  # None until first pull

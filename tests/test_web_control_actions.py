@@ -96,3 +96,15 @@ def test_enqueue_missing_video_is_400_not_500(temp_db_fk, tmp_path):
     assert r.status_code == 400
     r = c.post("/api/topics/999999/produce")
     assert r.status_code == 400
+
+
+def test_enqueue_main_only_command_on_short_is_400(client):
+    parent = _seed(VideoState.PUBLISHED.value, kind="main")
+    short = _seed(VideoState.RENDERED.value, kind="short", parent_id=parent,
+                  idempotency_key="short:web:0")
+    for cmd in ("gen-audio", "revoice", "assemble"):
+        r = client.post(f"/api/videos/{short}/enqueue/{cmd}")
+        assert r.status_code == 400 and "Regenerate shorts" in r.json()["detail"]
+    # gen-visuals stays allowed: the worker routes it to the shorts re-roll path
+    ok = client.post(f"/api/videos/{short}/enqueue/gen-visuals")
+    assert ok.status_code == 200 and ok.json()["status"] == "pending"

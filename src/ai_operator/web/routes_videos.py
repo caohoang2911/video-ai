@@ -3,6 +3,7 @@ decision history, upload). Read-only here; control POSTs are added in routes_act
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,20 +16,31 @@ from ..db.models import Asset, Decision, Upload, Video
 from ..db.models_ops import CostLedger, Job
 from ..db.state_machine import VideoState, can_transition
 from .rendering import iso, render
+from .retention_view import retention_panel
 
 router = APIRouter()
 
 
 def _media_url(path: str | None) -> str | None:
     """`/media/...` URL for a render artifact under OUTPUT_DIR, else None (path outside the
-    read-only output mount can't be previewed)."""
+    read-only output mount can't be previewed). Also None when the file no longer exists —
+    the DB pointer can outlive its artifact (e.g. revoice tears down final.mp4 before the
+    re-render lands), and a URL to a missing file renders as a broken player."""
     if not path:
         return None
     try:
-        rel = Path(path).resolve().relative_to(OUTPUT_DIR.resolve())
+        resolved = Path(path).resolve()
+        rel = resolved.relative_to(OUTPUT_DIR.resolve())
     except (ValueError, OSError):
         return None
+    if not resolved.exists():
+        return None
     return f"/media/{rel.as_posix()}"
+
+
+def _youtube_url(yt_id: str | None) -> str | None:
+    """Public watch URL once the video has a confirmed YouTube upload, else None."""
+    return f"https://youtu.be/{yt_id}" if yt_id else None
 
 # Actions a reviewer can drive from the detail page, and the state each needs to be legal in.
 # The template only shows a button when the current state can still transition into it.
@@ -51,6 +63,28 @@ def _video_row(v: Video) -> dict:
     }
 
 
+def _load_citations(script_path: str | None) -> list[dict]:
+    """Citations (+ flag-only fact_status/crosscheck detail) from the video's script.json —
+    the reviewer's evidence panel. Missing/older scripts return [] and the section hides."""
+    if not script_path or not Path(script_path).exists():
+        return []
+    try:
+        data = json.loads(Path(script_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    out = []
+    for c in data.get("citations", []):
+        cc = c.get("crosscheck") or {}
+        out.append({
+            "claim": c.get("claim", ""), "source": c.get("source", ""),
+            "fact_status": c.get("fact_status"),
+            "wikipedia": cc.get("wikipedia"), "wikipedia_article": cc.get("wikipedia_article"),
+            "skeptic": cc.get("skeptic"), "skeptic_reason": cc.get("skeptic_reason"),
+            "human": cc.get("human"),
+        })
+    return out
+
+
 def _video_detail(v: Video) -> dict:
     d = _video_row(v)
     d.update({
@@ -71,6 +105,17 @@ def list_videos(request: Request, state: str | None = None, kind: str | None = N
         stmt = stmt.where(Video.kind == kind)
     with SessionLocal() as s:
         videos = [_video_row(v) for v in s.scalars(stmt).all()]
+        # Watch links for published rows. Ordered by id so a retried upload's newest
+        # youtube_video_id wins (mirrors the detail view's latest-upload pick).
+        yt_ids = dict(
+            s.execute(
+                select(Upload.video_id, Upload.youtube_video_id)
+                .where(Upload.youtube_video_id.is_not(None))
+                .order_by(Upload.id)
+            ).all()
+        )
+        for row in videos:
+            row["youtube_url"] = _youtube_url(yt_ids.get(row["id"]))
         states = [st for (st,) in s.execute(select(Video.state).distinct()).all()]
         # Group rows into families for the tree view: each main followed by its shorts.
         # `videos` stays flat (JSON API contract); `families` drives the HTML table.
@@ -133,6 +178,7 @@ def video_detail(request: Request, video_id: int):
         upload = s.scalar(select(Upload).where(Upload.video_id == video_id).order_by(Upload.id.desc()))
         upload_row = None if upload is None else {
             "youtube_video_id": upload.youtube_video_id, "status": upload.status,
+            "youtube_url": _youtube_url(upload.youtube_video_id),
             "publish_at": iso(upload.publish_at), "ab_status": upload.ab_status,
             "winning_title": upload.winning_title, "winning_thumbnail": upload.winning_thumbnail,
         }
@@ -147,6 +193,8 @@ def video_detail(request: Request, video_id: int):
         "video": detail, "assets": assets, "costs": costs,
         "decisions": decisions, "upload": upload_row, "allowed_decisions": allowed,
         "shorts": shorts,  # children of a main; empty for a short
+        "retention": retention_panel(video_id, detail.get("duration_sec")),  # None if never uploaded
         "last_step": checkpoint.last_step(video_id),  # live pipeline position while rendering
         "last_job": last_job_row,  # most recent queue command for this video (shows failures)
+        "citations": _load_citations(v.script_path),  # fact-check evidence panel
     })

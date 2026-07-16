@@ -29,7 +29,8 @@
       <td><a href="/videos/{{ fam.main.id }}">#{{ fam.main.id }}</a></td>
       <td><span class="pill">chính</span>{% if fam.shorts %} <span class="pill small">{{ fam.shorts | length }} shorts</span>{% endif %}</td>
       <td><span class="pill state-{{ fam.main.state }}">{{ fam.main.state }}</span></td>
-      <td>{{ fam.main.title or '—' }}</td>
+      <td>{{ fam.main.title or '—' }}
+        {% if fam.main.youtube_url %} <a href="{{ fam.main.youtube_url }}" target="_blank" rel="noopener" class="small" title="xem trên YouTube">▶ YouTube</a>{% endif %}</td>
       <td>{{ fam.main.duration_sec or '—' }}</td>
       <td>{{ 'có' if fam.main.needs_revoice else '' }}</td>
       <td class="muted">{{ fam.main.updated_at }}</td>
@@ -49,7 +50,8 @@
       <td><a href="/videos/{{ v.id }}">#{{ v.id }}</a></td>
       <td><span class="pill">↳ short</span></td>
       <td><span class="pill state-{{ v.state }}">{{ v.state }}</span></td>
-      <td>{{ v.title or '—' }}</td>
+      <td>{{ v.title or '—' }}
+        {% if v.youtube_url %} <a href="{{ v.youtube_url }}" target="_blank" rel="noopener" class="small" title="xem trên YouTube">▶ YouTube</a>{% endif %}</td>
       <td>{{ v.duration_sec or '—' }}</td>
       <td>{{ 'có' if v.needs_revoice else '' }}</td>
       <td class="muted">{{ v.updated_at }}</td>

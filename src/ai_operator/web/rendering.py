@@ -17,12 +17,15 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 
+from ..config import settings
 from ..db.engine import SessionLocal
 from ..db.models import Video
 from ..db.models_ops import Job
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# Sidebar link to the public channel page — available to every HTML template.
+templates.env.globals["channel_url"] = settings.CHANNEL_URL
 
 
 def _nav_counts() -> dict:

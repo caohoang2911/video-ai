@@ -6,14 +6,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 
 from .. import checkpoint
 from ..db.engine import SessionLocal
 from ..db.models import Video
-from ..db.models_ops import CostLedger, Job
-from . import analytics_view, scheduler_control
-from .charts import views_sparkline
+from ..db.models_ops import Job
+from . import analytics_view, costs_view, scheduler_control
+from .charts import bar_chart, views_sparkline
 from .rendering import action_result, iso, render
 
 router = APIRouter()
@@ -35,20 +35,11 @@ def _fmt_elapsed(started, now: datetime) -> str | None:
 
 @router.get("/costs")
 def costs(request: Request):
-    spent = func.coalesce(
-        func.sum(func.coalesce(CostLedger.actual_cost, CostLedger.estimated_cost)), 0.0
-    )
-    with SessionLocal() as s:
-        rows = s.execute(
-            select(CostLedger.ym, CostLedger.provider, func.count(), spent)
-            .group_by(CostLedger.ym, CostLedger.provider)
-            .order_by(CostLedger.ym.desc(), CostLedger.provider)
-        ).all()
-    groups = [
-        {"ym": ym, "provider": provider, "calls": int(n), "cost": round(float(total), 2)}
-        for ym, provider, n, total in rows
-    ]
-    return render(request, "costs.html", {"costs": groups})
+    """Cost ledger: month summary vs budget cap + breakdowns (see web.costs_view)."""
+    data = costs_view.overview()
+    # Pre-render the per-day spend as inline SVG — same no-JS approach as /analytics.
+    data["daily_svg"] = bar_chart(data["daily"])
+    return render(request, "costs.html", data)
 
 
 @router.get("/analytics")

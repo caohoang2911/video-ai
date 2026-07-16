@@ -6,7 +6,12 @@
 
 <div class="row-between">
   <h1>Thống kê</h1>
-  <form method="post" action="/analytics/refresh"><button type="submit">Kéo từ YouTube ngay</button></form>
+  <div class="btnrow">
+    <a href="{{ channel_url }}" target="_blank" rel="noopener" class="iconlink">
+      <svg class="icon" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-yt"/></svg>
+      Kênh YouTube ↗</a>
+    <form method="post" action="/analytics/refresh"><button type="submit">Kéo từ YouTube ngay</button></form>
+  </div>
 </div>
 <p class="muted">
   Cập nhật gần nhất: {{ freshness.last_pull or '(chưa kéo)' }}
@@ -35,7 +40,8 @@
   <ul class="kv">
   {% for v in top %}
     <li>
-      <span class="small">{{ v.youtube_video_id }}</span>
+      <span class="small"><a href="https://youtu.be/{{ v.youtube_video_id }}" target="_blank" rel="noopener">{{ v.youtube_video_id }}</a>
+        {% if v.kind %} <span class="pill">{{ 'chính' if v.kind == 'main' else v.kind }}</span>{% endif %}</span>
       <span class="barwrap"><span class="bar" style="width: {{ (100 * v.views / maxv) | round(0, 'floor') }}%"></span></span>
       <span>{{ '{:,}'.format(v.views) }}</span>
     </li>
@@ -47,18 +53,19 @@
 <section class="card">
   <h3>Chi tiết mỗi video ({{ per_video | length }})</h3>
   <table>
-    <thead><tr><th>YouTube ID</th><th>Tính đến ngày</th><th>Lượt xem</th><th>Giữ chân</th><th>CTR</th></tr></thead>
+    <thead><tr><th>YouTube ID</th><th>Loại</th><th>Tính đến ngày</th><th>Lượt xem</th><th>Giữ chân</th><th>CTR</th></tr></thead>
     <tbody>
     {% for a in per_video %}
       <tr>
-        <td class="small">{{ a.youtube_video_id }}</td>
+        <td class="small"><a href="https://youtu.be/{{ a.youtube_video_id }}" target="_blank" rel="noopener">{{ a.youtube_video_id }}</a></td>
+        <td>{% if a.kind %}<span class="pill">{{ 'chính' if a.kind == 'main' else a.kind }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="muted">{{ a.as_of_date }}</td>
         <td>{{ '{:,}'.format(a.views) }}</td>
         <td>{{ a.avg_view_pct }}%</td>
         <td>{{ a.ctr }}%</td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="muted">Chưa có thống kê.</td></tr>
+      <tr><td colspan="6" class="muted">Chưa có thống kê.</td></tr>
     {% endfor %}
     </tbody>
   </table>

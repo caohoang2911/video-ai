@@ -59,3 +59,21 @@ def test_latest_per_video_is_one_row_each(temp_db):
     latest = health.latest_analytics_per_video()
     assert len(latest) == 3                                       # deduped to newest per video
     assert all(a.as_of_date == date.today() for a in latest)      # the newest date
+
+
+def test_per_video_rows_carry_video_kind(temp_db):
+    from ai_operator.db.models import Upload, Video
+
+    _seed()
+    with SessionLocal() as s:
+        main = Video(idempotency_key="m1", kind="main")
+        short = Video(idempotency_key="s1", kind="short")
+        s.add_all([main, short])
+        s.flush()
+        s.add(Upload(video_id=main.id, youtube_video_id="A", status="published"))
+        s.add(Upload(video_id=short.id, youtube_video_id="B", status="published"))
+        s.commit()
+
+    rows = {v["youtube_video_id"]: v["kind"] for v in analytics_view.overview()["per_video"]}
+    assert rows["A"] == "main" and rows["B"] == "short"
+    assert rows["C"] is None            # analytics row without a matching upload stays unlabeled

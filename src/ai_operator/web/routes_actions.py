@@ -10,6 +10,8 @@ A stale/illegal decision surfaces as a graceful message (409 JSON or a redirect 
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request
@@ -28,6 +30,11 @@ router = APIRouter()
 
 # Heavy per-video commands the detail page may enqueue (subset of JOB_COMMANDS that take a video).
 _VIDEO_COMMANDS = frozenset({"gen-audio", "gen-visuals", "revoice", "assemble", "publish"})
+# Commands wired to the MAIN pipeline only: they read shot_list scripts (assemble) or chain
+# into it (revoice enqueues assemble). A short that needs new audio or a rebuild re-rolls via
+# "Regenerate shorts" on its parent; gen-visuals is short-aware in the worker and publish
+# applies to both kinds.
+_MAIN_ONLY_COMMANDS = frozenset({"gen-audio", "revoice", "assemble"})
 
 
 def _decided(request: Request, video_id: int, payload: dict, status_code: int = 200):
@@ -58,6 +65,15 @@ def enqueue_job(
 def enqueue_for_video(request: Request, video_id: int, command: str, motion: bool = Form(False)):
     if command not in _VIDEO_COMMANDS:
         raise HTTPException(status_code=400, detail=f"{command!r} is not a per-video command")
+    with SessionLocal() as s:
+        video = s.get(Video, video_id)
+    # A missing video falls through: enqueue() raises ValueError -> the same 400 as before.
+    if video is not None and video.kind == "short" and command in _MAIN_ONLY_COMMANDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{command!r} runs the main-video pipeline — for a short, re-roll the "
+                   f"batch via 'Regenerate shorts' on parent #{video.parent_id}",
+        )
     try:
         job = enqueue(command, video_id=video_id, params={"motion": motion})
     except ValueError as exc:
@@ -127,3 +143,58 @@ def set_winner(
     except ValueError as exc:
         return _decided(request, video_id, {"error": str(exc)}, status_code=400)
     return _decided(request, video_id, {"state": "winner_recorded"})
+
+
+def _script_json(video_id: int) -> tuple[Path, dict]:
+    """(path, parsed script.json) for a video, or 404. Shared by the fact-check actions."""
+    with SessionLocal() as s:
+        video = s.get(Video, video_id)
+    if video is None or not video.script_path or not Path(video.script_path).exists():
+        raise HTTPException(status_code=404, detail=f"video {video_id} has no script.json")
+    path = Path(video.script_path)
+    return path, json.loads(path.read_text(encoding="utf-8"))
+
+
+@router.post("/videos/{video_id}/factcheck/{index}/resolve")
+def factcheck_resolve(request: Request, video_id: int, index: int):
+    """Human arbitration: the reviewer looked at the evidence and vouches for the claim.
+    Flips the citation to fact_status=ok and stamps crosscheck.human=confirmed — the machine
+    verdicts stay visible underneath so the trail shows WHO overrode WHAT."""
+    path, data = _script_json(video_id)
+    citations = data.get("citations", [])
+    if not 0 <= index < len(citations):
+        raise HTTPException(status_code=400, detail=f"citation index {index} out of range")
+    citations[index]["fact_status"] = "ok"
+    citations[index].setdefault("crosscheck", {})["human"] = "confirmed"
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return _decided(request, video_id, {"state": f"citation {index + 1}: đã bỏ cờ (người duyệt xác nhận)"})
+
+
+@router.post("/videos/{video_id}/factcheck/recheck")
+def factcheck_recheck(request: Request, video_id: int):
+    """Re-run the flag-only cross-check (Wikipedia + skeptic) over the video's citations —
+    for transient failures (Commons 429) or after research was corrected. Runs inline
+    (~15s: one wiki batch + one LLM call). Human arbitration OUTRANKS the machines: a
+    citation the reviewer already vouched for (crosscheck.human=confirmed) is kept as-is
+    and excluded from the re-run — only unarbitrated citations are recomputed."""
+    from ..content import fact_crosscheck
+    from ..content.schema import Citation
+
+    path, data = _script_json(video_id)
+    cits = [Citation(**c) for c in data.get("citations", [])]
+    if not cits:
+        return _decided(request, video_id, {"error": "script has no citations"}, status_code=400)
+    unarbitrated = [c for c in cits if (c.crosscheck or {}).get("human") != "confirmed"]
+    if not unarbitrated:
+        return _decided(request, video_id,
+                        {"state": "tất cả claim đã được người duyệt xác nhận — không kiểm lại gì"})
+    with SessionLocal() as s:
+        title = (s.get(Video, video_id).title or "")
+    verified = iter(fact_crosscheck.verify(title, "", unarbitrated, video_id=video_id))
+    merged = [c if (c.crosscheck or {}).get("human") == "confirmed" else next(verified) for c in cits]
+    data["citations"] = [c.model_dump() for c in merged]
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    kept = len(cits) - len(unarbitrated)
+    note = f" ({kept} claim người duyệt giữ nguyên)" if kept else ""
+    return _decided(request, video_id,
+                    {"state": f"đã kiểm lại: {fact_crosscheck.summarize(merged)}{note}"})

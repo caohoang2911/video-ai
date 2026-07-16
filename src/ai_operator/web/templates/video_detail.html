@@ -19,7 +19,8 @@
   </div>
   <p class="muted">chủ đề {{ video.topic_id or '—' }} · tạo {{ video.created_at }} · cập nhật {{ video.updated_at }}
     {% if last_step %} · bước xong gần nhất: <b>{{ last_step }}</b>{% endif %}
-    {% if video.needs_revoice %} · <b class="warn">cần lồng tiếng lại</b>{% endif %}</p>
+    {% if video.needs_revoice %} · <b class="warn">cần lồng tiếng lại</b>{% endif %}
+    {% if upload and upload.youtube_url %} · <a href="{{ upload.youtube_url }}" target="_blank" rel="noopener"><b>▶ Xem trên YouTube</b></a>{% endif %}</p>
   {% if last_job %}
   <p class="small">job gần nhất: <span class="pill {{ last_job.status }}">{{ last_job.command }} · {{ last_job.status }}</span>
     {% if last_job.finished_at %}<span class="muted">{{ last_job.finished_at }}</span>{% endif %}
@@ -34,7 +35,8 @@
       <div class="card">
         <h3>Xem trước</h3>
         {% if video.video_url %}<video src="{{ video.video_url }}" controls preload="metadata"></video>
-        {% else %}<p class="muted">chưa có file final.mp4 trong output/</p>{% endif %}
+        {% else %}<p class="muted">chưa có file final.mp4 trong output/{% if video.state == 'voiced' %}
+          — bước tiếp theo: <b>assemble</b> dựng video (tự vào hàng đợi sau revoice, hoặc bấm ở panel bên phải), xong thì duyệt lại{% endif %}</p>{% endif %}
         {% if video.thumb_url %}<img src="{{ video.thumb_url }}" alt="ảnh đại diện" class="thumb">{% endif %}
       </div>
       <div class="card">
@@ -63,6 +65,90 @@
         <button type="submit" class="danger">Tạo lại Shorts</button>
       </form>
       <p class="muted small">Tạo lại sẽ bỏ các short chưa đăng và sinh loạt mới; short đã đăng giữ nguyên.</p>
+    </section>
+    {% endif %}
+
+    {% if retention %}
+    <section class="card">
+      <h3>Giữ chân người xem{% if retention.views %} · {{ retention.views }} views{% endif %}</h3>
+      {% if retention.points %}
+      <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="retention-chart" role="img"
+           aria-label="Retention curve">
+        <line x1="0" y1="6.7" x2="100" y2="6.7" class="retention-gridline"/><!-- 100% of starters -->
+        <polyline points="{{ retention.points }}" class="retention-line retention-own"/>
+      </svg>
+      <p class="muted small">Đường kẻ ngang = 100% người bắt đầu xem. Trục dọc kẹp tại 120% (loop/xem lại có thể vượt 100%).</p>
+      {% if retention.hook_zone %}
+      <p>Hook zone:
+        {% for h in retention.hook_zone %}<b>{{ h.pct }}%</b> còn xem ở giây {{ h.sec }}{{ " · " if not loop.last }}{% endfor %}
+      </p>
+      {% endif %}
+      {% else %}
+      <p class="muted">Chưa đủ dữ liệu — YouTube chỉ trả đường cong khi video có đủ lượt xem (ngưỡng pull: 200 views).</p>
+      {% endif %}
+      {% if retention.siblings %}
+      <h4>So sánh các Shorts cùng sự kiện</h4>
+      <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="retention-chart" role="img"
+           aria-label="Sibling shorts retention overlay">
+        {% for sib in retention.siblings %}
+        <polyline points="{{ sib.points }}" class="retention-line retention-sib-{{ loop.index0 % 4 }}"/>
+        {% endfor %}
+      </svg>
+      <p class="muted small">
+        {% for sib in retention.siblings %}
+        <span class="retention-key retention-sib-{{ loop.index0 % 4 }}">■</span>
+        <a href="/videos/{{ sib.video_id }}">#{{ sib.video_id }}</a> {{ sib.title }}{{ " · " if not loop.last }}
+        {% endfor %}
+      </p>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if citations %}
+    {% set flagged = citations | selectattr('fact_status', 'in', ['weak', 'review']) | list %}
+    <section class="card">
+      <h3>Kiểm chứng dữ kiện ({{ citations | length }} trích dẫn{% if flagged %} · <span class="bad">{{ flagged | length }} cần xem</span>{% endif %})</h3>
+      <p class="muted small">Mỗi dòng: <b>VIDEO GỐC ĐANG DÙNG</b> = dữ kiện đã nằm trong lời bình video
+        (kèm nguồn do AI nghiên cứu tự khai) · <b>KIỂM CHỨNG ĐỘC LẬP</b> = Wikipedia + LLM skeptic soi lại sau.
+        Máy chỉ đánh cờ, không phân xử — bạn xem bằng chứng rồi quyết: claim đúng thì bỏ cờ, nghi ngờ thì kiểm lại.</p>
+      <p class="muted small"><span class="pill">OK</span> cả 2 tầng xác nhận — yên tâm
+        · <span class="pill pending">WEAK</span> chưa xác minh đủ (chưa chắc sai — đọc khi rảnh)
+        · <span class="pill failed">REVIEW</span> mâu thuẫn dữ kiện hoặc nghi bịa — <b>cần bạn xem trước khi duyệt</b>
+        · <span class="pill">—</span> chưa kiểm (video cũ / gate tắt)</p>
+      <table class="factcheck"><thead><tr><th></th><th>Claim · Nguồn · Bằng chứng</th><th></th></tr></thead><tbody>
+      {% for c in citations %}
+      <tr>
+        <td>{% if c.fact_status == 'ok' %}<span class="pill">OK</span>
+            {% elif c.fact_status == 'weak' %}<span class="pill pending">WEAK</span>
+            {% elif c.fact_status == 'review' %}<span class="pill failed">REVIEW</span>
+            {% else %}<span class="pill">—</span>{% endif %}
+            {% if c.human == 'confirmed' %}<div class="muted small">✓ người duyệt</div>{% endif %}</td>
+        <td>
+          <span class="muted small">VIDEO GỐC ĐANG DÙNG →</span> <b>{{ c.claim }}</b>
+          <div class="muted small">nguồn do AI nghiên cứu khai: {{ c.source }}</div>
+          <div class="small evidence">
+            <span class="muted">KIỂM CHỨNG ĐỘC LẬP →</span>
+            {% if c.wikipedia %}Wikipedia: <b>{{ c.wikipedia }}</b>
+              {% if c.wikipedia_article %} · <a href="https://en.wikipedia.org/wiki/{{ c.wikipedia_article | replace(' ', '_') }}" target="_blank" rel="noopener">{{ c.wikipedia_article }} ↗</a>{% endif %}
+              {% if c.skeptic %} · {% endif %}{% endif %}
+            {% if c.skeptic %}Skeptic: <b>{{ c.skeptic }}</b>{% if c.skeptic_reason %} — <span class="muted">{{ c.skeptic_reason }}</span>{% endif %}{% endif %}
+            {% if not c.wikipedia and not c.skeptic %}<span class="muted">chưa kiểm (video cũ hoặc gate tắt) — bấm “Kiểm lại toàn bộ”</span>{% endif %}
+          </div>
+        </td>
+        <td>
+          {% if c.fact_status in ['weak', 'review'] and c.human != 'confirmed' %}
+          <form method="post" action="/videos/{{ video.id }}/factcheck/{{ loop.index0 }}/resolve">
+            <button type="submit" class="small">✓ Claim đúng — bỏ cờ</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody></table>
+      <form method="post" action="/videos/{{ video.id }}/factcheck/recheck"
+            onsubmit="return confirm('Chạy lại kiểm chứng cho các claim CHƯA được bạn xác nhận (~15 giây)? Claim đã bỏ cờ (✓ người duyệt) giữ nguyên.')">
+        <button type="submit">↻ Kiểm lại toàn bộ</button>
+      </form>
     </section>
     {% endif %}
 
@@ -119,8 +205,13 @@
       <h3>Chạy lại một bước sản xuất</h3>
       <p class="muted small">Bấm để thêm việc vào hàng đợi; bộ lập lịch sẽ chạy.</p>
       <div class="btnrow">
-        {% for cmd in ['gen-audio', 'gen-visuals', 'revoice', 'assemble'] %}
-        <form method="post" action="/videos/{{ video.id }}/enqueue/{{ cmd }}">
+        {# short: chỉ gen-visuals (re-roll ảnh + dựng lại); audio/dựng lại toàn bộ đi qua "Tạo lại shorts" ở video mẹ #}
+        {% for cmd in (['gen-visuals'] if video.kind == 'short' else ['gen-audio', 'gen-visuals', 'revoice', 'assemble']) %}
+        {# revoice trên video đã render/duyệt là thao tác phá huỷ: xoá final.mp4 + reset duyệt #}
+        <form method="post" action="/videos/{{ video.id }}/enqueue/{{ cmd }}"
+              {% if cmd == 'revoice' and video.state in ['rendered', 'policy_ok', 'approved', 'published'] %}
+              onsubmit="return confirm('Revoice sẽ xoá bản render hiện tại và reset trạng thái duyệt về voiced (phải assemble + duyệt lại từ đầu). Tiếp tục?')"
+              {% endif %}>
           <button type="submit">{{ cmd }}</button>
         </form>
         {% endfor %}
@@ -145,8 +236,9 @@
         <label>Đường dẫn ảnh đại diện thắng <input name="thumb"></label>
         <button type="submit">Lưu bản thắng</button>
       </form>
-      {% if upload %}<p class="muted small">tải lên: {{ upload.status }} · {{ upload.youtube_video_id or '—' }}
-        · A/B {{ upload.ab_status or 'none' }}</p>{% endif %}
+      {% if upload %}<p class="muted small">tải lên: {{ upload.status }} ·
+        {% if upload.youtube_url %}<a href="{{ upload.youtube_url }}" target="_blank" rel="noopener">{{ upload.youtube_video_id }}</a>
+        {% else %}—{% endif %} · A/B {{ upload.ab_status or 'none' }}</p>{% endif %}
     </section>
   </aside>
 </div>

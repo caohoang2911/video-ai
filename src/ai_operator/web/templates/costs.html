@@ -2,15 +2,90 @@
 {% block title %}Chi phí{% endblock %}
 {% block content %}
 <h1>Sổ chi phí</h1>
-<p class="muted">Gộp theo tháng + nhà cung cấp (chi phí thực, thiếu thì lấy ước tính).</p>
-<table>
-  <thead><tr><th>Tháng</th><th>Nhà cung cấp</th><th>Số lần</th><th>Chi phí</th></tr></thead>
-  <tbody>
-  {% for c in costs %}
-    <tr><td>{{ c.ym }}</td><td>{{ c.provider }}</td><td>{{ c.calls }}</td><td>${{ '%.2f' | format(c.cost) }}</td></tr>
-  {% else %}
-    <tr><td colspan="4" class="muted">Chưa ghi nhận chi phí.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+<p class="muted">
+  Tháng {{ ym }} — cộng chi phí thực, mục nào chưa ghi thì tính theo ước tính đã giữ chỗ.
+  {% if pending %}<span class="warn">{{ pending }} mục đang tính theo ước tính.</span>{% endif %}
+</p>
+
+<section class="grid stats">
+  <div class="card"><h3>Đã chi tháng này</h3><p class="big">${{ '%.2f' | format(budget.spent) }}</p></div>
+  <div class="card">
+    <h3>Ngân sách còn lại</h3>
+    <p class="big {{ budget.level if budget.level != 'ok' else '' }}">${{ '%.2f' | format(budget.remaining) }}</p>
+    <p class="muted small">hạn mức ${{ '%.0f' | format(budget.monthly) }}/tháng</p>
+  </div>
+  <div class="card"><h3>Lượt gọi API</h3><p class="big">{{ calls }}</p></div>
+  <div class="card">
+    <h3>TB mỗi video</h3>
+    <p class="big">${{ '%.2f' | format(avg_per_video) }}</p>
+    <p class="muted small">{{ videos }} video có phát sinh chi phí</p>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Mức dùng ngân sách — {{ budget.pct }}%</h3>
+  <div class="budget-track"><span class="bar {{ budget.level if budget.level != 'ok' else '' }}" style="width: {{ budget.bar_pct }}%"></span></div>
+  <p class="muted small">${{ '%.2f' | format(budget.spent) }} / ${{ '%.0f' | format(budget.monthly) }} — pipeline tự chặn bước mới khi ước tính vượt phần còn lại.</p>
+</section>
+
+<section class="grid">
+  <div class="card">
+    <h3>Theo nhà cung cấp (tháng này)</h3>
+    {% if providers %}
+    <ul class="kv">
+    {% for p in providers %}
+      <li>
+        <span class="small">{{ p.provider }}</span>
+        <span class="barwrap"><span class="bar" style="width: {{ p.share }}%"></span></span>
+        <span>${{ '%.2f' | format(p.cost) }} <span class="muted small">· {{ p.calls }} lần</span></span>
+      </li>
+    {% endfor %}
+    </ul>
+    {% else %}<p class="muted">Chưa ghi nhận chi phí tháng này.</p>{% endif %}
+  </div>
+  <div class="card">
+    <h3>Chi tiêu theo ngày</h3>
+    {{ daily_svg | safe }}
+    <p class="muted small">Từ ngày 1 đến hôm nay (giờ UTC).</p>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Theo bước pipeline (tháng này)</h3>
+  <table>
+    <thead><tr><th>Bước</th><th>Nhà cung cấp</th><th>Số lần</th><th>Chi phí</th><th>Tỷ trọng</th></tr></thead>
+    <tbody>
+    {% for st in steps %}
+      <tr>
+        <td class="mono">{{ st.step }}</td>
+        <td>{{ st.provider }}</td>
+        <td class="mono">{{ st.calls }}</td>
+        <td class="mono">${{ '%.2f' | format(st.cost) }}</td>
+        <td class="muted">{{ st.share }}%</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">Chưa ghi nhận chi phí tháng này.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h3>Lịch sử theo tháng</h3>
+  <table>
+    <thead><tr><th>Tháng</th><th>Nhà cung cấp</th><th>Số lần</th><th>Chi phí</th></tr></thead>
+    <tbody>
+    {% for c in history %}
+      <tr>
+        <td class="mono">{{ c.ym }}</td>
+        <td>{{ c.provider }}</td>
+        <td class="mono">{{ c.calls }}</td>
+        <td class="mono">${{ '%.2f' | format(c.cost) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Chưa ghi nhận chi phí.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

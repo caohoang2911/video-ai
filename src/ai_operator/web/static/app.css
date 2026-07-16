@@ -83,7 +83,8 @@ a:hover { color: #8cbaff; }
 .thumb { max-width: min(100%, 640px); margin-top: .5rem; border-radius: 8px; }
 
 /* ---------- tables ---------- */
-table { width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
+/* display:table (mặc định) để width:100% thật sự giãn hết card — display:block làm bảng co theo nội dung */
+table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .5rem .65rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th { color: var(--muted); font-weight: 600; font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; }
 td { vertical-align: top; }
@@ -153,6 +154,10 @@ td button { padding: .3rem .7rem; font-size: .82rem; }         /* nút trong b�
 .row-between h1 { margin-bottom: 0; }  /* heading + nút hành động cùng baseline */
 .barwrap { flex: 1; height: 8px; margin: 0 .8rem; background: var(--line); border-radius: 999px; overflow: hidden; }
 .bar { display: block; height: 100%; background: linear-gradient(90deg, var(--accent-strong), var(--accent)); border-radius: 999px; }
+/* thanh mức dùng ngân sách (trang Chi phí): dày hơn sparkbar, đổi màu theo mức dùng */
+.budget-track { height: 10px; margin: .2rem 0 .6rem; background: var(--line); border-radius: 999px; overflow: hidden; }
+.bar.warn { background: linear-gradient(90deg, #a97f2a, var(--warn)); }
+.bar.bad { background: linear-gradient(90deg, #b3423b, var(--bad)); }
 .card svg { display: block; width: 100%; height: auto; max-width: 880px; }  /* chart không phóng to vô hạn trên màn rộng */
 
 /* ---------- forms & buttons ---------- */
@@ -166,8 +171,10 @@ form label input:focus, form label select:focus, form label textarea:focus {
   outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
 }
-.btnrow { display: flex; gap: .5rem; flex-wrap: wrap; }
+.btnrow { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .btnrow form { display: inline; }
+/* link kèm icon (vd. link kênh YouTube trên trang Thống kê): icon và chữ thẳng hàng */
+.iconlink { display: inline-flex; align-items: center; gap: .45rem; text-decoration: none; }
 button {
   background: var(--accent-strong); color: #fff; border: 0; border-radius: 8px;
   padding: .48rem .9rem; cursor: pointer; font-size: .9rem; font-weight: 600;
@@ -235,3 +242,24 @@ details summary { cursor: pointer; color: var(--muted); margin: .3rem 0; }
   .sidebar nav a.active { box-shadow: inset 0 -2px 0 var(--accent); }
   main { padding: 1rem; }
 }
+
+/* ---------- fact-check panel ---------- */
+/* Trích dẫn là văn xuôi dài — phải wrap, ngược với nowrap mặc định của bảng số liệu.
+   Scoped vào .factcheck để các bảng khác giữ nguyên hành vi chống xô cột. */
+.factcheck td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.factcheck td:first-child, .factcheck td:last-child { white-space: nowrap; width: 1%; }
+.factcheck .evidence { margin-top: .3rem; }
+
+/* ---------- retention curve panel (video detail) ---------- */
+/* SVG polyline sparkline — không cần JS chart; trục dọc kẹp watch_ratio 0..1.2 để các
+   đường overlay của shorts anh em dùng chung một thang đo. */
+.retention-chart { width: 100%; height: 120px; display: block; background: rgba(255,255,255,.03);
+  border: 1px solid var(--line); border-radius: 6px; }
+.retention-line { fill: none; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.retention-own { stroke: #f5c542; stroke-width: 1.6; }
+.retention-gridline { stroke: var(--line); stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.retention-sib-0 { stroke: #4da3ff; color: #4da3ff; }
+.retention-sib-1 { stroke: #f5c542; color: #f5c542; }
+.retention-sib-2 { stroke: #7bd88f; color: #7bd88f; }
+.retention-sib-3 { stroke: #ff7b72; color: #ff7b72; }
+.retention-key { font-size: .8rem; }
