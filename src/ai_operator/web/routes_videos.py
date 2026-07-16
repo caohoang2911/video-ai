@@ -15,6 +15,7 @@ from ..db.engine import SessionLocal
 from ..db.models import Asset, Decision, Upload, Video
 from ..db.models_ops import CostLedger, Job
 from ..db.state_machine import VideoState, can_transition
+from ..publisher import ab_variants
 from .rendering import iso, render
 from .retention_view import retention_panel
 
@@ -83,6 +84,36 @@ def _load_citations(script_path: str | None) -> list[dict]:
             "human": cc.get("human"),
         })
     return out
+
+
+def _title_options(script_path: str | None) -> list[str]:
+    """The video's 3 candidate titles from script.json (for the Studio A/B kit). Empty on any
+    read/parse miss -- a missing kit must never 500 the detail page."""
+    if not script_path or not Path(script_path).exists():
+        return []
+    try:
+        opts = json.loads(Path(script_path).read_text(encoding="utf-8")).get("title_options") or []
+    except (OSError, ValueError):
+        return []
+    return [o.get("title", "") if isinstance(o, dict) else str(o) for o in opts if o]
+
+
+def _ab_kit(v: Video, upload_row: dict | None) -> dict | None:
+    """Copy-paste kit for YouTube Studio's (API-less) Test & Compare: the 3 candidate titles,
+    the 3 thumbnail variants, and a Studio deep-link. Only meaningful for a PUBLISHED main
+    (Shorts have no Test & Compare); None otherwise so the panel stays hidden."""
+    if v.kind != "main" or not upload_row or not upload_row.get("youtube_video_id"):
+        return None
+    yt_id = upload_row["youtube_video_id"]
+    thumbs = [_media_url(p) for p in ab_variants.discover_thumb_variants(v.video_path or "")]
+    return {
+        "titles": _title_options(v.script_path),
+        "thumbs": [t for t in thumbs if t],
+        "studio_url": f"https://studio.youtube.com/video/{yt_id}/edit",
+        "status": upload_row.get("ab_status"),
+        "winning_title": upload_row.get("winning_title"),
+        "winning_thumbnail": upload_row.get("winning_thumbnail"),
+    }
 
 
 def _video_detail(v: Video) -> dict:
@@ -193,6 +224,7 @@ def video_detail(request: Request, video_id: int):
         "video": detail, "assets": assets, "costs": costs,
         "decisions": decisions, "upload": upload_row, "allowed_decisions": allowed,
         "shorts": shorts,  # children of a main; empty for a short
+        "ab_kit": _ab_kit(v, upload_row),  # Studio A/B copy-paste kit; None for shorts/unpublished
         "retention": retention_panel(video_id, detail.get("duration_sec")),  # None if never uploaded
         "last_step": checkpoint.last_step(video_id),  # live pipeline position while rendering
         "last_job": last_job_row,  # most recent queue command for this video (shows failures)

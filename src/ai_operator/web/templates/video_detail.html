@@ -68,6 +68,61 @@
     </section>
     {% endif %}
 
+    {% if ab_kit %}
+    <section class="card ab-kit">
+      <h3>A/B Test Kit (Studio · Test &amp; Compare)
+        {% if ab_kit.status %}<span class="pill">{{ ab_kit.status }}</span>{% endif %}
+      </h3>
+      <p class="muted small">YouTube không có API cho Test &amp; Compare — dán các phương án dưới vào Studio thủ công, rồi ghi lại người thắng ở đây để pipeline học.</p>
+      <p><a href="{{ ab_kit.studio_url }}" target="_blank" rel="noopener"><b>▶ Mở video này trong Studio</b></a></p>
+
+      <h4>3 tiêu đề (bấm để copy)</h4>
+      {% if ab_kit.titles %}
+      <ol class="ab-titles">
+        {% for t in ab_kit.titles %}
+        <li><button type="button" class="copy-btn" onclick="navigator.clipboard.writeText(this.dataset.t);this.textContent='✓ đã copy'"
+                    data-t="{{ t }}">Copy</button> {{ t }}</li>
+        {% endfor %}
+      </ol>
+      {% else %}<p class="muted">Không đọc được title_options từ script.json.</p>{% endif %}
+
+      {% if ab_kit.thumbs %}
+      <h4>3 thumbnail (tải lên Studio)</h4>
+      <div class="ab-thumbs">
+        {% for u in ab_kit.thumbs %}
+        <figure><img src="{{ u }}" alt="thumbnail variant {{ loop.index }}"><figcaption>{{ ['A','B','C'][loop.index0] }}</figcaption></figure>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if ab_kit.status == 'done' %}
+      <p class="ok">Winner đã ghi — tiêu đề: <b>{{ ab_kit.winning_title or '—' }}</b>{% if ab_kit.winning_thumbnail %} · thumb: {{ ab_kit.winning_thumbnail }}{% endif %}</p>
+      {% else %}
+      {% if ab_kit.status != 'running' %}
+      <form method="post" action="/videos/{{ video.id }}/ab-setup" style="display:inline">
+        <button type="submit">Đánh dấu đã tạo test trong Studio</button>
+      </form>
+      {% endif %}
+      <form method="post" action="/videos/{{ video.id }}/set-winner" class="ab-winner">
+        <h4>Ghi người thắng (sau ~2 tuần Studio chốt)</h4>
+        <label>Tiêu đề thắng:
+          <select name="title">
+            <option value="">— chọn —</option>
+            {% for t in ab_kit.titles %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Thumbnail thắng:
+          <select name="thumb">
+            <option value="">— chọn —</option>
+            {% for u in ab_kit.thumbs %}<option value="{{ u }}">{{ ['A','B','C'][loop.index0] }}</option>{% endfor %}
+          </select>
+        </label>
+        <button type="submit">Lưu winner</button>
+      </form>
+      {% endif %}
+    </section>
+    {% endif %}
+
     {% if retention %}
     <section class="card">
       <h3>Giữ chân người xem{% if retention.views %} · {{ retention.views }} views{% endif %}</h3>

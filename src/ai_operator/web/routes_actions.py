@@ -131,6 +131,17 @@ def decide(
     return _decided(request, video_id, {"state": new_state.value, "code": code})
 
 
+@router.post("/videos/{video_id}/ab-setup")
+def ab_setup(request: Request, video_id: int):
+    """Operator marks the Studio Test & Compare as set up (ab_status='running') so the panel
+    tracks which published videos have an active A/B test."""
+    try:
+        ab_variants.mark_running(video_id)
+    except ValueError as exc:
+        return _decided(request, video_id, {"error": str(exc)}, status_code=400)
+    return _decided(request, video_id, {"state": "A/B test đánh dấu đang chạy"})
+
+
 @router.post("/videos/{video_id}/set-winner")
 def set_winner(
     request: Request,

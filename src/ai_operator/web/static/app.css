@@ -263,3 +263,14 @@ details summary { cursor: pointer; color: var(--muted); margin: .3rem 0; }
 .retention-sib-2 { stroke: #7bd88f; color: #7bd88f; }
 .retention-sib-3 { stroke: #ff7b72; color: #ff7b72; }
 .retention-key { font-size: .8rem; }
+
+/* ---------- A/B test kit (video detail) ---------- */
+.ab-titles { margin: .4rem 0; padding-left: 1.4rem; }
+.ab-titles li { margin: .35rem 0; line-height: 1.5; }
+.copy-btn { font-size: .78rem; padding: .1rem .5rem; margin-right: .4rem; cursor: pointer; }
+.ab-thumbs { display: flex; gap: .6rem; flex-wrap: wrap; margin: .4rem 0; }
+.ab-thumbs figure { margin: 0; text-align: center; }
+.ab-thumbs img { width: 220px; max-width: 40vw; border: 1px solid var(--line); border-radius: 6px; display: block; }
+.ab-thumbs figcaption { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
+.ab-winner { margin-top: .6rem; display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
+.ab-winner select { max-width: 100%; }

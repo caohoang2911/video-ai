@@ -69,6 +69,17 @@ def _print_checklist(video_id: int, title_options: list[dict], thumb_paths: list
     log.info("printed manual Studio A/B checklist for video %s", video_id)
 
 
+def mark_running(video_id: int) -> None:
+    """Flag that the operator has set the Studio test up (ab_status='running'), so the panel
+    can track which published videos have an active A/B test vs none. Idempotent."""
+    with SessionLocal() as s:
+        upload_row = _latest_upload(s, video_id)
+        if upload_row is None:
+            raise ValueError(f"no upload row for video {video_id}")
+        upload_row.ab_status = "running"
+        s.commit()
+
+
 def set_winner(video_id: int, title: str | None = None, thumb: str | None = None) -> None:
     """Record the human-observed A/B winner (phase 07 reads this to close the loop)."""
     with SessionLocal() as s:
