@@ -152,6 +152,14 @@ pairs with its title, not a caption: "10,000 GONE.", "NO RESCUE.", "ONE MISTAKE.
 "MaritimeHistory", "Documentary"). YouTube shows the **first 3 above the title**, so order
 them most-important first: one topic-specific, then broad niche ones.
 
+## End-screen teaser
+
+`outro_teaser`: ONE line, **max ~90 characters**, shown on the closing end-screen card
+while the next-video and subscribe buttons are on screen. It must sell "one more story"
+with curiosity — never thank the viewer, never summarize, never name a specific next
+video (it isn't known yet). Example register: "History keeps its darkest stories in the
+footnotes. Here's another." Plain text: no quotes, no hashtags, no emoji.
+
 ## Output format
 
 Respond with **ONLY** minified JSON, no markdown fences, no commentary, matching
@@ -175,7 +183,8 @@ exactly this shape:
   ],
   "description": "string — YouTube description, 2-4 sentences; the FIRST sentence must stand alone under 125 characters (it is the only line shown in search/suggested) and re-hook, not summarize",
   "tags": ["string", "... 10-15 SEO tags ..."],
-  "hashtags": ["Shipwreck", "MaritimeHistory", "... 3-5, no spaces, no # ..."]
+  "hashtags": ["Shipwreck", "MaritimeHistory", "... 3-5, no spaces, no # ..."],
+  "outro_teaser": "string — one curiosity line (max ~90 chars) for the end-screen card"
 }
 ```
 

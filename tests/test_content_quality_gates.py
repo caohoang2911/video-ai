@@ -199,7 +199,10 @@ def _publish_happy_path_mocks(tmp_path, monkeypatch):
     return Session, captured
 
 
-def test_publish_no_script_fallback_builds_dict_title_options(tmp_path, monkeypatch):
+def test_publish_no_script_fallback_builds_dict_title_options(tmp_path, monkeypatch, temp_db):
+    # temp_db: publish()'s gen-shorts auto-enqueue writes through the SHARED sessionmaker
+    # (job_queue), not the patched pub_mod one — without temp_db those rows leaked into the
+    # developer's real data/*.db and the live scheduler executed them.
     Session, captured = _publish_happy_path_mocks(tmp_path, monkeypatch)
     with Session() as s:
         s.add(Video(
@@ -218,7 +221,8 @@ def test_publish_no_script_fallback_builds_dict_title_options(tmp_path, monkeypa
         assert s.scalar(select(Upload).where(Upload.video_id == 10)) is not None
 
 
-def test_publish_db_title_overlay_promotes_and_dedups_dict_shape(tmp_path, monkeypatch):
+def test_publish_db_title_overlay_promotes_and_dedups_dict_shape(tmp_path, monkeypatch, temp_db):
+    # temp_db: same shared-sessionmaker reason as the fallback test above
     Session, captured = _publish_happy_path_mocks(tmp_path, monkeypatch)
     script_dir = tmp_path / "11"
     script_dir.mkdir()

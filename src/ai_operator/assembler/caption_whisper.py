@@ -27,10 +27,22 @@ def _model():
     return _MODEL
 
 
-def transcribe(mp3_path: str | Path) -> list[dict]:
+def transcribe(mp3_path: str | Path, with_words: bool = False) -> list[dict]:
     """Return segment-level captions: [{start, end, text}], in chronological order.
+
+    `with_words=True` adds `words: [{start, end, text}]` to each segment (karaoke caption
+    timing for Shorts); the SRT path ignores the extra key, so callers can share one call.
 
     faster-whisper's `segments` is a lazy generator -- must be consumed exactly once here.
     """
-    segments, _info = _model().transcribe(str(mp3_path), language="en", word_timestamps=False)
-    return [{"start": s.start, "end": s.end, "text": s.text.strip()} for s in segments]
+    segments, _info = _model().transcribe(str(mp3_path), language="en", word_timestamps=with_words)
+    out: list[dict] = []
+    for s in segments:
+        seg: dict = {"start": s.start, "end": s.end, "text": s.text.strip()}
+        if with_words:
+            seg["words"] = [
+                {"start": w.start, "end": w.end, "text": w.word.strip()}
+                for w in (s.words or []) if w.word.strip()
+            ]
+        out.append(seg)
+    return out

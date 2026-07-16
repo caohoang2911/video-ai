@@ -281,12 +281,12 @@ def test_kenburns_extra_vf_is_appended_to_filter_chain(tmp_path, monkeypatch):
     img = tmp_path / "beat_01.jpg"
     img.write_bytes(b"x")
 
-    kenburns_ffmpeg.render_segment(img, 2.0, tmp_path / "seg.mp4", zoom_in=True,
+    kenburns_ffmpeg.render_segment(img, 2.0, tmp_path / "seg.mp4",
                                    extra_vf=kenburns_ffmpeg.ARCHIVAL_GRADE_VF)
     vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
     assert vf.endswith(kenburns_ffmpeg.ARCHIVAL_GRADE_VF)
 
-    kenburns_ffmpeg.render_segment(img, 2.0, tmp_path / "seg2.mp4", zoom_in=True)
+    kenburns_ffmpeg.render_segment(img, 2.0, tmp_path / "seg2.mp4")
     vf_plain = captured["cmd"][captured["cmd"].index("-vf") + 1]
     assert kenburns_ffmpeg.ARCHIVAL_GRADE_VF not in vf_plain
 
@@ -304,7 +304,7 @@ def test_segment_builder_grades_only_archival_beats(tmp_path, monkeypatch):
 
     seen = {}
 
-    def _fake_render(image_path, duration, out, zoom_in, extra_vf=None, **kw):
+    def _fake_render(image_path, duration, out, motion="zoom_in", extra_vf=None, **kw):
         seen[Path(image_path).name] = extra_vf
         return out
     monkeypatch.setattr(segment_builder.kenburns_ffmpeg, "render_segment", _fake_render)

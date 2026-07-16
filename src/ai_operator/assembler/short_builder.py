@@ -21,7 +21,7 @@ from ..config import OUTPUT_DIR, settings
 from ..db import InvalidTransition, SessionLocal, VideoState
 from ..db.models import Video
 from ..logging_setup import get_logger
-from . import branding, ffmpeg_encode, kenburns_ffmpeg, srt_writer
+from . import ass_karaoke_writer, branding, ffmpeg_encode, kenburns_ffmpeg, srt_writer
 from .caption_whisper import transcribe
 from .video_builder import STEP, _persist_rendered_state, _resolve_music_path
 
@@ -70,8 +70,11 @@ def build_short(video_id: int) -> dict:
         )
 
     beats = script["beats"]
-    # Shorts beats carry no narration_span, so time is split evenly across them.
-    per_beat = narration_dur / len(beats)
+    # Whisper runs BEFORE the segment loop: its segment ends drive the per-beat durations
+    # (image cuts snap to phrase boundaries instead of an even grid) and, when enabled,
+    # its word times drive the karaoke captions. One transcription serves both.
+    caps = transcribe(narration_path, with_words=settings.SHORTS_KARAOKE_CAPTIONS)
+    durations = _beat_durations(narration_dur, len(beats), caps)
 
     work = video_dir / "segments"
     work.mkdir(parents=True, exist_ok=True)
@@ -83,17 +86,24 @@ def build_short(video_id: int) -> dict:
         stills.append(still)
         segments.append(
             kenburns_ffmpeg.render_segment(
-                still, per_beat, work / f"seg_{i:02d}.mp4", zoom_in=(i % 2 == 0), size=SHORT_SIZE
+                still, durations[i], work / f"seg_{i:02d}.mp4",
+                motion=kenburns_ffmpeg.motion_for_index(i), size=SHORT_SIZE,
             )
         )
 
-    srt_path = srt_writer.write_srt(transcribe(narration_path), video_dir / "captions.srt")
+    if settings.SHORTS_KARAOKE_CAPTIONS and any(s.get("words") for s in caps):
+        # ASS carries its own karaoke style; force_style would clobber the per-word timing.
+        cap_path = ass_karaoke_writer.write_karaoke_ass(caps, video_dir / "captions.ass")
+        cap_style = None
+    else:
+        cap_path = srt_writer.write_srt(caps, video_dir / "captions.srt")
+        cap_style = _PORTRAIT_SUB_STYLE
     base = ffmpeg_encode.concat_copy(segments, video_dir / "base.mp4")
     # Same mood-matched, ducked/swelling bed as mains (picker reads the short's beat moods
     # and writes the CC-BY credit into script.json for the publish description).
     body = ffmpeg_encode.burn_and_mux(
-        base, srt_path, narration_path, _resolve_music_path(video_id, video_dir),
-        video_dir / "body.mp4", sub_style=_PORTRAIT_SUB_STYLE,
+        base, cap_path, narration_path, _resolve_music_path(video_id, video_dir),
+        video_dir / "body.mp4", sub_style=cap_style,
         pre_fx=ffmpeg_encode.ambient_glow_fx(narration_dur, SHORT_SIZE),
         post_fx=_pinned_title_fx(script.get("text_overlay") or "", video_dir),
     )
@@ -117,6 +127,35 @@ def build_short(video_id: int) -> dict:
          "idempotency_key": make_idempotency_key(str(video_id), STEP, str(narration_path))},
     )
     return {"video_path": str(final_path), "duration_sec": rendered}
+
+
+# Image cuts snap to caption-segment ends within this window; smaller would rarely snap,
+# larger would visibly unbalance beats. Segment ends are whisper's stable output -- word
+# times drift on proper nouns, so they never drive cuts.
+_SNAP_TOLERANCE_S = 0.8
+_MIN_BEAT_S = 1.5
+
+
+def _beat_durations(narration_dur: float, n_beats: int, caps: list[dict]) -> list[float]:
+    """Per-beat durations for the Shorts segment loop: an even split whose interior
+    boundaries each snap to the nearest caption-segment end within _SNAP_TOLERANCE_S, so
+    the image cut lands between phrases instead of mid-word. Boundaries stay monotonic
+    with _MIN_BEAT_S between them, and durations always sum to narration_dur exactly."""
+    per = narration_dur / n_beats
+    ends = sorted(float(s.get("end") or 0.0) for s in caps)
+    bounds: list[float] = []
+    prev = 0.0
+    for i in range(1, n_beats):
+        target = i * per
+        cands = [
+            e for e in ends
+            if abs(e - target) <= _SNAP_TOLERANCE_S
+            and prev + _MIN_BEAT_S <= e <= narration_dur - _MIN_BEAT_S
+        ]
+        # fallback keeps monotonicity even for degenerate grids (per-beat < tolerance)
+        bounds.append(min(cands, key=lambda e: abs(e - target)) if cands else max(target, prev + 0.1))
+        prev = bounds[-1]
+    return [b - a for a, b in zip([0.0, *bounds], [*bounds, narration_dur])]
 
 
 def _portrait_still(src: Path, out: Path) -> Path:
@@ -177,7 +216,7 @@ def _end_card(last_still: Path, card_copy: str, out: Path, work: Path) -> Path:
     )
     # 2) the card keeps the motion going — same Ken Burns as the beats
     moving = kenburns_ffmpeg.render_segment(
-        backdrop, END_CARD_SECONDS, work / "endcard_motion.mp4", zoom_in=True, size=SHORT_SIZE
+        backdrop, END_CARD_SECONDS, work / "endcard_motion.mp4", motion="zoom_in", size=SHORT_SIZE
     )
     # 3) layout: [logo] [channel name] gap [fragment lines] gap [CTA], all vertically centered
     lines: list[tuple[str, str, int]] = []

@@ -14,6 +14,7 @@ import textwrap
 from pathlib import Path
 
 from ..logging_setup import get_logger
+from . import endscreen_outro
 from .ffmpeg_encode import FPS, _run, video_encode_args
 
 log = get_logger("assembler.branding")
@@ -22,6 +23,13 @@ BRANDING_DIR = Path(__file__).resolve().parents[3] / "assets" / "branding"
 CARD_SECONDS = 3.0
 WIDTH, HEIGHT = 1920, 1080
 _WRAP_COLS = 26
+# Cold-open title overlay: how long the title rides the opening of the BODY (narration
+# already speaking underneath) before it is fully gone. Short fades so the hook image is
+# never covered for long.
+COLD_OPEN_TITLE_SECONDS = 4.5
+_COLD_OPEN_FADE_IN = 0.6
+_COLD_OPEN_FADE_OUT = 0.8
+_COLD_OPEN_WRAP_COLS = 34
 _MACOS_FONTS = (
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/Library/Fonts/Arial.ttf",
@@ -111,17 +119,60 @@ def _normalize_user_clip(src: Path, out: Path) -> Path:
     return out
 
 
-def make_intro(title: str, out: str | Path) -> Path:
+def user_intro() -> Path | None:
+    """The operator's hand-made bumper clip, or None. Its absence means COLD OPEN — the
+    body starts at t=0 with the title overlaid on the first beats — never a synthesized
+    black card: 3 silent static seconds at t=0 is exactly where browse viewers bail."""
     src = BRANDING_DIR / "intro.mp4"
-    if src.exists():
+    return src if src.exists() else None
+
+
+def cold_open_title_fx(title: str, workdir: Path) -> str | None:
+    """drawtext chain that pins the title over the opening seconds of the body: fade in,
+    hold, fully gone by COLD_OPEN_TITLE_SECONDS. Placed in the TOP band so it never
+    collides with the caption zone at the bottom. One drawtext per wrapped line so each
+    line centers itself. Returned as a `burn_and_mux` post_fx (renders above captions);
+    textfiles are written to `workdir` because burn_and_mux runs with cwd there."""
+    if not title.strip():
+        return None
+    hold_until = COLD_OPEN_TITLE_SECONDS - _COLD_OPEN_FADE_OUT
+    alpha = (
+        f"'if(lt(t,{_COLD_OPEN_FADE_IN}),t/{_COLD_OPEN_FADE_IN},"
+        f"if(lt(t,{hold_until}),1,"
+        f"max(0,({COLD_OPEN_TITLE_SECONDS}-t)/{_COLD_OPEN_FADE_OUT})))'"
+    )
+    lines = textwrap.wrap(title, _COLD_OPEN_WRAP_COLS) or [" "]
+    draws = []
+    for i, line in enumerate(lines):
+        txt = Path(workdir) / f"coldopen_{i}.txt"
+        txt.write_text(line, encoding="utf-8")
+        draws.append(
+            f"drawtext=fontfile='{_drawtext_font()}':textfile={txt.name}:"
+            f"fontcolor=white:borderw=5:bordercolor=black:fontsize=76:"
+            f"x=(w-text_w)/2:y={110 + i * 96}:alpha={alpha}"
+        )
+    return ",".join(draws)
+
+
+def make_intro(title: str, out: str | Path) -> Path:
+    src = user_intro()
+    if src is not None:
         return _normalize_user_clip(src, Path(out))
     log.info("assets/branding/intro.mp4 missing -> synthesizing a title card")
     return _synth_card(title or "", "0x0a0a14", Path(out))
 
 
-def make_outro(out: str | Path, subscribe_text: str = "Thanks for watching -- subscribe for more") -> Path:
+def make_outro(
+    out: str | Path, *, teaser: str | None = None, music: str | Path | None = None
+) -> Path:
+    """End-screen outro card: reserved zones for YouTube's next-video/subscribe elements,
+    a per-video teaser line, and (when given) the video's music bed fading back in."""
     src = BRANDING_DIR / "outro.mp4"
     if src.exists():
+        # A hand-made outro is used as-is (its own layout and audio) -- keeping its
+        # element zones clear is the responsibility of whoever authored the clip.
         return _normalize_user_clip(src, Path(out))
-    log.info("assets/branding/outro.mp4 missing -> synthesizing an end card")
-    return _synth_card(subscribe_text, "0x140a0a", Path(out))
+    log.info("assets/branding/outro.mp4 missing -> synthesizing an end-screen outro card")
+    return endscreen_outro.build_endscreen_outro(
+        Path(out), font=_drawtext_font(), teaser=teaser, music=music
+    )

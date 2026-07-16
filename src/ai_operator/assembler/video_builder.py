@@ -1,9 +1,11 @@
 """Orchestrates the assemble step end-to-end, ffmpeg-native (no MoviePy on the render path):
 Ken Burns segments -> concat body -> burn captions + mux ducked audio (body-first) -> join
-pre-built intro/outro -> single hardware-encoded final.mp4.
+outro (and a user-supplied intro bumper, when one exists) -> single hardware-encoded final.mp4.
 
-Body-first ordering keeps caption/narration t=0 pinned to the first body beat; intro/outro are
+Body-first ordering keeps caption/narration t=0 pinned to the first body beat; the cards are
 stream-copy-concatenated around the finished body so their length never shifts the timeline.
+Default opening is a COLD OPEN: narration + beat 1 at t=0 with the title fading over the top
+band — a bumper only precedes it when the operator drops assets/branding/intro.mp4 in place.
 """
 
 from __future__ import annotations
@@ -57,15 +59,34 @@ def assemble_video(video_id: int) -> dict:
     if not narration_path.exists():
         raise FileNotFoundError(f"missing {narration_path}")
 
-    shot_list = json.loads(script_path.read_text(encoding="utf-8"))["shot_list"]
+    script_data = json.loads(script_path.read_text(encoding="utf-8"))
+    shot_list = script_data["shot_list"]
     narration_dur = ffmpeg_encode.probe_duration(narration_path)
     durations = compute_beat_durations(shot_list, narration_dur)
-    _persist_chapters(script_path, shot_list, durations)
+    # Cold open by default: no bumper -> the body IS t=0, so chapters carry no offset.
+    user_intro = branding.user_intro()
+    _persist_chapters(
+        script_path, shot_list, durations,
+        intro_seconds=branding.CARD_SECONDS if user_intro else 0.0,
+    )
 
-    # Cards first: they are cheap but can fail on a missing drawtext font -- fail fast here,
-    # before the expensive segment render + whisper + hardware encode.
-    intro = branding.make_intro(title or "", video_dir / "intro.mp4")
-    outro = branding.make_outro(video_dir / "outro.mp4")
+    # Music resolves before the cards so the outro can fade the same bed back in after the
+    # body's fade-out. pick_for_video rewrites script.json (music_credit), so it runs after
+    # _persist_chapters; both re-read the file, neither clobbers the other's fields.
+    music_path = _resolve_music_path(video_id, video_dir)
+
+    # Cards next: they are cheap but can fail on a missing drawtext font -- fail fast here,
+    # before the expensive segment render + whisper + hardware encode. Only a hand-made
+    # assets/branding/intro.mp4 earns a bumper slot; otherwise the video cold-opens on
+    # beat 1 with narration at t=0 and the title fading over the opening seconds instead
+    # of a dead silent card.
+    intro = branding.make_intro(title or "", video_dir / "intro.mp4") if user_intro else None
+    title_fx = None if user_intro else branding.cold_open_title_fx(title or "", video_dir)
+    outro = branding.make_outro(
+        video_dir / "outro.mp4",
+        teaser=script_data.get("outro_teaser") or None,
+        music=music_path,
+    )
 
     segments_dir = video_dir / "segments"
     segments = segment_builder.build_segments(
@@ -76,14 +97,16 @@ def assemble_video(video_id: int) -> dict:
 
     base = ffmpeg_encode.concat_copy(segments, video_dir / "base.mp4")
     body = ffmpeg_encode.burn_and_mux(
-        base, srt_path, narration_path, _resolve_music_path(video_id, video_dir), video_dir / "body.mp4",
+        base, srt_path, narration_path, music_path, video_dir / "body.mp4",
         # same ambient glow/flicker the Shorts use — stills-based footage reads less static
         pre_fx=ffmpeg_encode.ambient_glow_fx(narration_dur, (WIDTH, HEIGHT)),
+        post_fx=title_fx,
     )
-    ffmpeg_encode.concat_copy([intro, body, outro], final_path, audio_reencode=True)
+    parts = [intro, body, outro] if intro else [body, outro]
+    ffmpeg_encode.concat_copy(parts, final_path, audio_reencode=True)
 
     rendered_duration = int(round(ffmpeg_encode.probe_duration(final_path)))
-    _cleanup_intermediates(segments_dir, [base, body, intro, outro])
+    _cleanup_intermediates(segments_dir, [base, body, outro, *([intro] if intro else [])])
 
     idem_key = make_idempotency_key(str(video_id), STEP, str(narration_path))
     _persist_rendered_state(video_id, str(final_path), rendered_duration)
@@ -91,12 +114,14 @@ def assemble_video(video_id: int) -> dict:
     return {"video_path": str(final_path), "duration_sec": rendered_duration}
 
 
-def _persist_chapters(script_path: Path, shot_list: list[dict], durations: list[float]) -> None:
+def _persist_chapters(
+    script_path: Path, shot_list: list[dict], durations: list[float], intro_seconds: float
+) -> None:
     """Write the computed YouTube chapter lines back into script.json — assemble is the only
     step that knows real beat durations, and the publisher (or a manual-upload export) reads
     the description metadata from script.json. Never fails the render over chapter bookkeeping."""
     try:
-        chapters = chapter_builder.build_chapters(shot_list, durations, intro_seconds=branding.CARD_SECONDS)
+        chapters = chapter_builder.build_chapters(shot_list, durations, intro_seconds=intro_seconds)
         data = json.loads(script_path.read_text(encoding="utf-8"))
         data["chapters"] = chapters
         script_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

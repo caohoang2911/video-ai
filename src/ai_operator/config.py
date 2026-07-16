@@ -85,8 +85,13 @@ class Settings(BaseSettings):
     NICHE: str = "Forgotten Disasters of History"
     # Shown on branded render surfaces (Shorts end card); matches the live YouTube channel.
     CHANNEL_NAME: str = "Their Final Hours"
+    # Public channel page; linked from the control panel sidebar.
+    CHANNEL_URL: str = "https://www.youtube.com/@their-final-hours"
     YT_CATEGORY_ID: str = "27"  # 27 = Education
     WEEKLY_VIDEO_CAP: int = 3
+    # Word-by-word "karaoke" captions on Shorts (ASS burn); long-form keeps plain SRT.
+    # Falls back to SRT automatically when whisper yields no word timestamps.
+    SHORTS_KARAOKE_CAPTIONS: bool = True
 
     # --- web control panel (local only) ---
     # Bind loopback only: the panel has no auth, so it must never listen on 0.0.0.0.

@@ -20,7 +20,7 @@ from ..config import OUTPUT_DIR
 from ..db import SessionLocal
 from ..db.models import Asset, Video
 from ..logging_setup import get_logger
-from . import thumbnail_style
+from . import thumbnail_frame_score, thumbnail_style
 
 log = get_logger("assembler.thumbnail")
 
@@ -71,7 +71,8 @@ def _overlay_texts(script_path: Path) -> list[str]:
 def _caption_free_sources(video_id: int) -> tuple[list[Path], list[Path]]:
     """Raw per-beat visuals as frame sources, split `(archival, others)`. Unlike the final
     render these carry NO burned narration captions, so nothing shows through the overlay
-    text. Each group is ordered by filename (== beat order) for `_pick_spread` sampling."""
+    text. Each group is ordered by filename (== beat order) so equal-scored candidates —
+    e.g. unreadable files that all rank -inf — keep a deterministic beat-order tie-break."""
     with SessionLocal() as session:
         rows = session.execute(
             select(Asset).where(
@@ -91,20 +92,15 @@ def _thumbnail_sources(video_id: int) -> list[Path]:
     """Frame sources for the variants, ARCHIVAL FIRST: in a history niche a real photograph
     thumbnail reads as authentic research (vs an AI-looking frame), so variant `a` — the
     primary thumb_path — is always an archival photo when one exists. Remaining slots fill
-    from the other visuals, and the built-in A/B test then compares real-vs-generated."""
+    from the other visuals. Within each group candidates are ranked by frame score (contrast
+    + detail, text-dense and flat frames penalized) instead of beat position, so a dull or
+    typography-heavy photo never becomes the face of the video. Unscoreable sources (b-roll
+    mp4s PIL can't open) sink to the bottom but remain usable as a last resort."""
     archival, others = _caption_free_sources(video_id)
-    picked = _pick_spread(archival, N_VARIANTS)
+    picked = thumbnail_frame_score.rank(archival, N_VARIANTS)
     if len(picked) < N_VARIANTS:
-        picked += _pick_spread(others, N_VARIANTS - len(picked))
+        picked += thumbnail_frame_score.rank(others, N_VARIANTS - len(picked))
     return picked
-
-
-def _pick_spread(items: list, n: int) -> list:
-    """`n` items spread evenly across `items` (variety early/mid/late); fewer if list is short."""
-    if len(items) <= n:
-        return list(items)
-    step = len(items) / n
-    return [items[int(i * step)] for i in range(n)]
 
 
 def _extract_frame(src: Path, out_path: Path) -> None:

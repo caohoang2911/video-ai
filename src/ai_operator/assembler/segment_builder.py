@@ -103,11 +103,15 @@ def _broll_montage_segment(clips: list[Path], duration: float, out: Path) -> Pat
 def build_segments(
     shot_list: list[dict], durations: list[float], video_id: int, img_dir: Path, out_dir: Path
 ) -> list[Path]:
-    """One segment per beat in shot_list order: motion b-roll where available, else Ken Burns still."""
+    """One segment per beat: motion b-roll where available, else a Ken Burns still with one
+    smooth gentle move for the whole beat. A short black dip separates consecutive still
+    IMAGES (beat boundary); b-roll boundaries hard-cut."""
     img_dir, out_dir = Path(img_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     broll = _broll_by_beat(video_id)
     archival = _archival_beats(video_id)
+    is_still = [beat["beat_id"] not in broll for beat in shot_list]
+    n = len(shot_list)
     n_motion = 0
 
     segments: list[Path] = []
@@ -119,11 +123,15 @@ def build_segments(
             n_motion += 1
         else:
             kenburns_ffmpeg.render_segment(
-                img_dir / f"beat_{beat_id:02d}.jpg", duration, out, zoom_in=(i % 2 == 0),
+                img_dir / f"beat_{beat_id:02d}.jpg", duration, out,
+                motion=kenburns_ffmpeg.motion_for_index(i),
                 # ảnh tư liệu thật đi qua lớp grade đồng nhất để hoà với still SDXL
                 extra_vf=kenburns_ffmpeg.ARCHIVAL_GRADE_VF if beat_id in archival else None,
+                # dip to/from black only between two still images -- b-roll neighbours hard-cut
+                fade_in=i > 0 and is_still[i - 1],
+                fade_out=i < n - 1 and is_still[i + 1],
             )
         segments.append(out)
 
-    log.info("video %s: %d/%d beats use motion b-roll (rest Ken Burns stills)", video_id, n_motion, len(segments))
+    log.info("video %s: %d beats (%d motion b-roll), dip between stills", video_id, n, n_motion)
     return segments

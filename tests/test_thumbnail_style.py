@@ -47,3 +47,23 @@ def test_draw_title_empty_is_noop():
     snapshot = list(img.getdata())
     ts.draw_title(img, "   ")
     assert list(img.getdata()) == snapshot
+
+
+def test_clean_text_uppercases_and_strips_trailing_punctuation():
+    assert ts._clean_text("City Gone.") == "CITY GONE"
+    assert ts._clean_text(" one mistake!? ") == "ONE MISTAKE"
+
+
+def test_stylize_duotones_grayscale_frames():
+    grey = Image.new("RGB", SIZE, (128, 128, 128))
+    out = ts.stylize(grey)
+    px = list(out.resize((16, 9)).getdata())
+    assert any(abs(r - b) > 15 for r, _, b in px)  # duotone tint applied, no longer neutral grey
+
+
+def test_draw_title_two_tone_accent_and_base():
+    img = Image.new("RGB", SIZE, (0, 0, 0))
+    ts.draw_title(img, "CITY GONE")
+    colors = {c for _, c in img.getcolors(maxcolors=100000)}
+    assert ts.ACCENT_COLOR in colors  # punch word in yellow
+    assert ts.BASE_COLOR in colors    # leading words in white

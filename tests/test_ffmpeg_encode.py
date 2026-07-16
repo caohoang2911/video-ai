@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_operator.assembler import branding, ffmpeg_encode, srt_writer
+from ai_operator.assembler import branding, endscreen_outro, ffmpeg_encode, srt_writer
 
 
 @pytest.fixture(autouse=True)
@@ -157,7 +157,27 @@ def test_concat_copy_audio_reencode_produces_uniform_stereo(tmp_path):
 # --------------------------------------------------------------------------------------
 
 
-def test_branding_card_matches_concat_spec(tmp_path):
+def _mean_volume_db(path: Path) -> float:
+    """volumedetect mean_volume in dB; -91.0 stands in for digital silence (-inf)."""
+    out = subprocess.run(
+        ["ffmpeg", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    for line in out.stderr.splitlines():
+        if "mean_volume" in line:
+            val = line.split("mean_volume:")[1].strip().split(" ")[0]
+            return -91.0 if val == "-inf" else float(val)
+    return -91.0
+
+
+@pytest.fixture()
+def _synth_outro_path(monkeypatch, tmp_path):
+    """Force the synthesized-card path even when the repo carries a hand-made
+    assets/branding/outro.mp4 (which would otherwise be normalized and returned)."""
+    monkeypatch.setattr(branding, "BRANDING_DIR", tmp_path / "no-branding")
+
+
+def test_outro_card_matches_concat_spec_at_endscreen_length(tmp_path, _synth_outro_path):
     out = branding.make_outro(tmp_path / "outro.mp4")
     streams = _probe(out)["streams"]
     v = next(s for s in streams if s["codec_type"] == "video")
@@ -166,3 +186,20 @@ def test_branding_card_matches_concat_spec(tmp_path):
     assert v["avg_frame_rate"] == "24/1"
     assert v["pix_fmt"] == "yuv420p"
     assert a["codec_name"] == "aac" and int(a["channels"]) == 2
+    # end-screen elements need 5-20s of runway; the card must provide it
+    assert abs(ffmpeg_encode.probe_duration(out) - endscreen_outro.OUTRO_SECONDS) < 0.3
+    assert not list(tmp_path.glob("outro_teaser*.txt"))   # teaser textfiles cleaned up
+
+
+def test_outro_card_fades_music_bed_back_in(tmp_path, _synth_outro_path):
+    bed = tmp_path / "bed.mp3"
+    _tone(bed, seconds=30.0)
+    out = branding.make_outro(tmp_path / "outro.mp4", teaser="One more story", music=bed)
+    a = next(s for s in _probe(out)["streams"] if s["codec_type"] == "audio")
+    assert a["codec_name"] == "aac" and int(a["channels"]) == 2
+    assert _mean_volume_db(out) > -50.0                   # bed is audible, not anullsrc
+
+
+def test_outro_card_is_silent_without_music(tmp_path, _synth_outro_path):
+    out = branding.make_outro(tmp_path / "outro.mp4", music=None)
+    assert _mean_volume_db(out) < -80.0

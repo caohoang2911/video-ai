@@ -73,15 +73,17 @@ def concat_copy(inputs: list[Path], out: Path, *, audio_reencode: bool = False) 
 
 
 def ambient_glow_fx(duration: float, size: tuple[int, int]) -> str:
-    """`pre_fx` fragment for burn_and_mux: subtle life over stills-based footage — a slow
-    drifting warm light-wash (animated gradients, screen blend at low opacity) plus a gentle
-    two-frequency brightness flicker. Reads as haze and lamplight rather than a static frame."""
-    w, h = size
+    """`pre_fx` fragment for burn_and_mux: a gentle two-frequency brightness flicker so
+    stills-based footage breathes slightly instead of sitting dead-flat.
+
+    An earlier animated-gradient warm light-wash was removed: the `gradients` source rotates
+    a diagonal dark band across the frame, which the strong Ken Burns zoom used to mask; once
+    the zoom was softened (near-static image), that band read as a dark stripe sweeping the
+    middle of the screen. The flicker alone gives life without any moving artifact.
+    `duration`/`size` are unused now but kept so callers need not change."""
     return (
-        f"gradients=s={w}x{h}:c0=0x1a1206:c1=0xcdb37e:speed=0.02:d={duration + 1:.3f}[glow];"
-        f"[0:v][glow]blend=all_mode=screen:all_opacity=0.10:shortest=1,"
-        f"eq=eval=frame:brightness='0.015*sin(2*PI*t/1.9)+0.010*sin(2*PI*t/0.53)',"
-        f"format=yuv420p[vpre]"
+        "[0:v]eq=eval=frame:brightness='0.015*sin(2*PI*t/1.9)+0.010*sin(2*PI*t/0.53)',"
+        "format=yuv420p[vpre]"
     )
 
 
@@ -92,7 +94,7 @@ def burn_and_mux(
     music: str | Path | None,
     out: Path,
     *,
-    sub_style: str = _SUB_STYLE,
+    sub_style: str | None = _SUB_STYLE,
     pre_fx: str | None = None,
     post_fx: str | None = None,
 ) -> Path:
@@ -105,6 +107,12 @@ def burn_and_mux(
     `post_fx`: optional filter chain applied ON TOP of the captions (e.g. a pinned title);
     plain chain body without labels. Both default off — the landscape path is unchanged."""
     base, srt, narration, out = Path(base), Path(srt), Path(narration), Path(out)
+    # Music is resolved well before this call (the outro card consumes it first); if the
+    # file vanished in between, degrade to narration-only instead of failing the render
+    # after the expensive segment/whisper work.
+    if music and not Path(music).exists():
+        log.warning("music bed %s disappeared before mux — rendering without music", music)
+        music = None
     dur = probe_duration(narration)
     fade = min(FADE_SECONDS, dur / 4) if dur else FADE_SECONDS
     # A speechless narration yields an empty SRT; the subtitles filter aborts on a 0-byte file,
@@ -117,7 +125,10 @@ def burn_and_mux(
         parts.append(pre_fx)
         vin = vmap = "[vpre]"
     if has_caps:
-        parts.append(f"{vin}subtitles={srt.name}:force_style='{sub_style}'[vcap]")
+        # sub_style=None burns a self-styled subtitle file (ASS karaoke) as-is; force_style
+        # would clobber the per-word colour timing embedded in it.
+        style = f":force_style='{sub_style}'" if sub_style else ""
+        parts.append(f"{vin}subtitles={srt.name}{style}[vcap]")
         vin = vmap = "[vcap]"
     if post_fx:
         parts.append(f"{vin}{post_fx}[vout]")

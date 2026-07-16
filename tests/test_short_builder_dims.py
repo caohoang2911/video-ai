@@ -2,6 +2,7 @@
 boundaries (no real ffmpeg render)."""
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -40,7 +41,7 @@ def test_build_short_targets_portrait_dims(voiced_short, tmp_path):
         out.write_bytes(b"png")
         return out
 
-    def fake_segment(image_path, duration, out_path, zoom_in, size=(1920, 1080)):
+    def fake_segment(image_path, duration, out_path, motion="zoom_in", size=(1920, 1080), **kw):
         seen["kenburns_sizes"].append(size)
         out_path.write_bytes(b"mp4")
         return out_path
@@ -70,6 +71,57 @@ def test_build_short_targets_portrait_dims(voiced_short, tmp_path):
     assert result["duration_sec"] == 40
     with SessionLocal() as s:
         assert s.get(Video, voiced_short).state == VideoState.RENDERED.value
+
+
+def test_build_short_burns_karaoke_ass_when_words_present(voiced_short, tmp_path):
+    """With word timestamps available, the shorts path burns a self-styled ASS (sub_style
+    None) instead of the SRT + force_style pair."""
+    seen = {}
+
+    def fake_burn(base, cap, narr, music, out, **kw):
+        seen["cap"], seen["style"] = Path(cap), kw.get("sub_style", "MISSING")
+        return out
+
+    caps = [{"start": 0.0, "end": 1.0, "text": "x",
+             "words": [{"start": 0.0, "end": 1.0, "text": "x"}]}]
+    with patch.object(short_builder, "_portrait_still", side_effect=lambda s, o: (o.write_bytes(b"p"), o)[1]), \
+         patch.object(short_builder.kenburns_ffmpeg, "render_segment",
+                      side_effect=lambda i, d, o, **kw: (o.write_bytes(b"m"), o)[1]), \
+         patch.object(short_builder, "_end_card", side_effect=lambda s, c, o, w: o), \
+         patch.object(short_builder, "transcribe", return_value=caps), \
+         patch.object(short_builder.ffmpeg_encode, "probe_duration", return_value=40.0), \
+         patch.object(short_builder.ffmpeg_encode, "concat_copy", side_effect=lambda segs, out, **kw: out), \
+         patch.object(short_builder.ffmpeg_encode, "burn_and_mux", side_effect=fake_burn), \
+         patch.object(short_builder, "is_done", return_value=False), \
+         patch.object(short_builder, "write_checkpoint"), \
+         patch.object(short_builder, "_resolve_music_path", return_value=None):
+        short_builder.build_short(voiced_short)
+
+    assert seen["cap"].suffix == ".ass" and seen["cap"].exists()
+    assert seen["style"] is None
+    assert "\\k" in seen["cap"].read_text()
+
+
+def test_beat_durations_snap_to_nearby_phrase_ends():
+    caps = [{"start": 0, "end": 10.5, "text": "a"},
+            {"start": 10.5, "end": 19.7, "text": "b"},
+            {"start": 19.7, "end": 30.0, "text": "c"}]
+    durs = short_builder._beat_durations(30.0, 3, caps)
+    # even boundaries 10.0/20.0 pull to phrase ends 10.5/19.7
+    assert durs == pytest.approx([10.5, 9.2, 10.3])
+    assert sum(durs) == pytest.approx(30.0)
+
+
+def test_beat_durations_keep_even_grid_when_no_phrase_end_is_near():
+    caps = [{"start": 0, "end": 5.0, "text": "a"}, {"start": 5.0, "end": 30.0, "text": "b"}]
+    durs = short_builder._beat_durations(30.0, 3, caps)
+    assert durs == pytest.approx([10.0, 10.0, 10.0])
+
+
+def test_beat_durations_with_no_captions_split_evenly_and_sum_exactly():
+    durs = short_builder._beat_durations(41.7, 6, [])
+    assert len(durs) == 6
+    assert sum(durs) == pytest.approx(41.7, abs=1e-9)
 
 
 def test_build_short_rejects_over_60s_narration(voiced_short, tmp_path):
