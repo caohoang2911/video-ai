@@ -23,13 +23,14 @@ def register(app: typer.Typer) -> None:
     @app.command("gen-topics")
     def gen_topics(
         n: int = typer.Option(5, "--n", help="How many new topics to suggest via LLM"),
+        category: str = typer.Option("maritime", "--category", help="Sub-niche: maritime|aviation|industrial|rail|structural|fire"),
     ) -> None:
         """Seed the backlog from seed_topics.yaml, then ask the LLM for N more angles."""
         setup_logging()
         added = topic_backlog.seed_backlog()
         if added:
             typer.echo(f"Seeded {added} topic(s) from seed_topics.yaml.")
-        created = topic_backlog.suggest_topics(n)
+        created = topic_backlog.suggest_topics(n, category=category)
         if not created:
             typer.echo("No new topics accepted (all duplicates, or LLM returned none).")
             return

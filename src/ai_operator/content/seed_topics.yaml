@@ -8,7 +8,9 @@
 #
 # Each entry: title (real event), angle (the unique POV/thread the script builds
 # around), source_hint (the TYPE of record research_gate should look for/cite —
-# not a pre-verified citation; research_gate still runs and can still reject).
+# not a pre-verified citation; research_gate still runs and can still reject), and an
+# OPTIONAL category (maritime|aviation|industrial|rail|structural|fire; defaults to
+# maritime). All current seeds are maritime — tag new-category seeds explicitly.
 topics:
   - title: "SS Sultana: The Deadliest Disaster America Refused to Remember"
     angle: "Overshadowed the same week by Lincoln's assassination coverage — the worst maritime disaster in US history got a fraction of the ink."

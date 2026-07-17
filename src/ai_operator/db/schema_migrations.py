@@ -19,6 +19,9 @@ log = get_logger("db.schema_migrations")
 _PENDING: tuple[tuple[str, str, str], ...] = (
     ("videos", "kind", "VARCHAR(8) DEFAULT 'main'"),
     ("videos", "parent_id", "INTEGER REFERENCES videos(id)"),
+    ("topics", "category", "VARCHAR(20) DEFAULT 'maritime'"),
+    ("topics", "demand_score", "INTEGER"),
+    ("topics", "demand_meta", "TEXT"),
 )
 
 

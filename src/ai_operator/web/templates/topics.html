@@ -5,18 +5,30 @@
   <h1>Chủ đề</h1>
   {# form gọn 1 dòng: nhãn + số lượng + nút, nằm cùng hàng với tiêu đề #}
   <form method="post" action="/topics/gen-topics" class="inline-form">
+    <label>Danh mục
+      <select name="category">
+        {% for key, c in categories.items() %}
+        <option value="{{ key }}">{{ c.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label>Số lượng <input type="number" name="n" value="5" min="1" max="20"></label>
     <button type="submit">Nạp chủ đề AI gợi ý</button>
   </form>
 </div>
 
 <table>
-  <thead><tr><th>ID</th><th>Tiêu đề</th><th>Góc nhìn</th><th>Tư liệu Commons</th><th>Trạng thái</th><th>Sản xuất</th></tr></thead>
+  <thead><tr><th>ID</th><th>Tiêu đề</th><th>Danh mục</th><th>Tiềm năng</th><th>Góc nhìn</th><th>Tư liệu Commons</th><th>Trạng thái</th><th>Sản xuất</th></tr></thead>
   <tbody>
   {% for t in topics %}
     <tr>
       <td>{{ t.id }}</td>
       <td>{{ t.title }}</td>
+      <td class="small">{{ t.category }}</td>
+      {# điểm tiềm năng (demand YouTube 0-100); hover xem video cạnh tranh #}
+      <td class="small" title="{{ t.demand_tooltip }}">
+        {% if t.demand_score is not none %}<strong>{{ t.demand_score }}</strong>{% else %}<span class="muted">—</span>{% endif %}
+      </td>
       <td class="muted small">{{ t.angle or '—' }}</td>
       {# độ phủ ảnh tư liệu thật: nạp async từng ô (Commons rate-limit 1 req/s) #}
       <td hx-get="/topics/{{ t.id }}/commons-coverage" hx-trigger="load" hx-swap="innerHTML">
@@ -44,7 +56,7 @@
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="6" class="muted">Chưa có chủ đề.</td></tr>
+    <tr><td colspan="8" class="muted">Chưa có chủ đề.</td></tr>
   {% endfor %}
   </tbody>
 </table>

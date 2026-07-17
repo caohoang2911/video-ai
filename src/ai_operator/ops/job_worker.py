@@ -55,7 +55,7 @@ def _produce(job: Job) -> None:
 
 def _gen_topics(job: Job) -> None:
     topic_backlog.seed_backlog()
-    topic_backlog.suggest_topics(int(_param(job, "n", 5)))
+    topic_backlog.suggest_topics(int(_param(job, "n", 5)), category=str(_param(job, "category", "maritime")))
 
 
 def _gen_audio(job: Job) -> None:

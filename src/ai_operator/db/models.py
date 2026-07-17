@@ -20,6 +20,11 @@ class Topic(Base):
     angle: Mapped[str | None] = mapped_column(Text, default=None)          # unique POV = originality
     source_notes: Mapped[str | None] = mapped_column(Text, default=None)
     status: Mapped[str] = mapped_column(String(20), default="backlog")     # backlog|used|rejected
+    category: Mapped[str] = mapped_column(String(20), default="maritime", index=True)  # sub-niche
+    # Opportunity score 0-100 from the YouTube demand-vs-competition signal; None = not scored
+    # (no YT key / quota / non-maritime with no data). demand_meta holds the JSON evidence.
+    demand_score: Mapped[int | None] = mapped_column(Integer, default=None)
+    demand_meta: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

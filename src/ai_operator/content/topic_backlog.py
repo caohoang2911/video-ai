@@ -16,6 +16,7 @@ from ..dedup.topic_dedup import is_duplicate, record
 from ..db.engine import SessionLocal
 from ..db.models import Topic
 from ..logging_setup import get_logger
+from . import topic_categories, topic_demand
 from .llm_client import complete, parse_json
 
 log = get_logger("content.topic_backlog")
@@ -24,15 +25,18 @@ log = get_logger("content.topic_backlog")
 # hand-written originality seed — it must ship with the repo, not be regenerated.
 SEED_PATH = Path(__file__).parent / "seed_topics.yaml"
 
-_SUGGEST_SYSTEM_PROMPT = (
-    "You are a maritime-history researcher sourcing topics for a faceless YouTube "
-    "documentary channel about forgotten maritime disasters. Suggest NEW, real, "
-    "lesser-known maritime disasters distinct from the examples given — never repeat "
-    "an example or a well-worn one (e.g. Titanic). Each topic needs a unique angle: "
-    "the specific human, investigative, or political thread that makes it worth "
-    'telling. Respond with ONLY minified JSON: {"topics":[{"title":str,"angle":str,'
-    '"source_hint":str}, ...]}'
-)
+
+def _suggest_system_prompt(category: str) -> str:
+    """LLM system prompt for topic suggestion, scoped to the chosen sub-niche (`domain`)."""
+    dom = topic_categories.domain(category)
+    return (
+        f"You are a history researcher sourcing topics for a faceless YouTube documentary "
+        f"channel about forgotten {dom}. Suggest NEW, real, lesser-known events in that domain, "
+        "distinct from the examples given — never repeat an example or a well-worn one "
+        "(e.g. Titanic). Each topic needs a unique angle: the specific human, investigative, or "
+        "political thread that makes it worth telling. Respond with ONLY minified JSON: "
+        '{"topics":[{"title":str,"angle":str,"source_hint":str}, ...]}'
+    )
 
 
 def load_seeds() -> list[dict]:
@@ -57,39 +61,55 @@ def seed_backlog() -> int:
             s.add(Topic(
                 slug=_slugify(title), title=title, angle=seed.get("angle"),
                 source_notes=seed.get("source_hint"), status="backlog",
+                category=topic_categories.valid(seed.get("category")),
             ))
             added += 1
         s.commit()
     return added
 
 
-def suggest_topics(n: int, video_id: int | None = None) -> list[Topic]:
-    """Ask Claude for `n` new maritime-disaster angles; dedup + persist as backlog."""
+def suggest_topics(n: int, category: str = "maritime", video_id: int | None = None) -> list[Topic]:
+    """Ask Claude for `n` new disaster angles in `category`; dedup, demand-score, persist."""
+    category = topic_categories.valid(category)
     seeds = load_seeds()
-    seed_lines = "\n".join(f"- {s['title']}: {s.get('angle', '')}" for s in seeds[:15])
+    # bias the "don't repeat" examples toward the chosen sub-niche so the LLM stays on-domain
+    same = [s for s in seeds if topic_categories.valid(s.get("category")) == category]
+    seed_lines = "\n".join(f"- {s['title']}: {s.get('angle', '')}" for s in (same or seeds)[:15])
     user = f"Existing topics (do not repeat):\n{seed_lines}\n\nSuggest {n} new topics."
 
-    raw = complete(_SUGGEST_SYSTEM_PROMPT, user, max_tokens=1500, step="suggest_topics", video_id=video_id)
+    raw = complete(_suggest_system_prompt(category), user, max_tokens=1500,
+                   step="suggest_topics", video_id=video_id)
     data = parse_json(raw)
 
+    # Phase 1 — all network I/O (dedup reads + YT demand lookups) OUTSIDE any write transaction,
+    # so the slow calls never hold SQLite's single write lock (which would starve web/scheduler).
+    accepted: list[tuple[dict, int | None, str | None]] = []
+    for item in data.get("topics", []):
+        title = (item.get("title") or "").strip()
+        if not title or is_duplicate(title):
+            continue
+        # entity (pre-colon) is the clean query for the demand lookup; best-effort (None ok)
+        demand, meta = topic_demand.score_json(title.split(":")[0].strip())
+        accepted.append((item, demand, meta))
+        if len(accepted) >= n:
+            break
+
+    # Phase 2 — one short write transaction: insert topics + record their dedup embeddings in the
+    # SAME session (record(session=s) avoids the nested-write self-deadlock).
     created: list[Topic] = []
     with SessionLocal() as s:
-        for item in data.get("topics", []):
-            title = (item.get("title") or "").strip()
-            if not title or is_duplicate(title):
-                continue
+        for item, demand, meta in accepted:
+            title = item["title"].strip()
             topic = Topic(
                 slug=_slugify(title), title=title, angle=item.get("angle"),
                 source_notes=item.get("source_hint"), status="backlog",
+                category=category, demand_score=demand, demand_meta=meta,
             )
             s.add(topic)
-            s.flush()  # need topic.id before recording embedding history
-            record(title)
+            record(title, session=s)
             created.append(topic)
-            if len(created) >= n:
-                break
         s.commit()
-    log.info("suggest_topics: created %d/%d requested (rest were duplicates)", len(created), n)
+    log.info("suggest_topics[%s]: created %d/%d requested (rest were duplicates)", category, len(created), n)
     return created
 
 

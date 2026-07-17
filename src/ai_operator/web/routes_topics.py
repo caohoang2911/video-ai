@@ -4,9 +4,12 @@ in the web process."""
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Form, HTTPException, Request
 from sqlalchemy import select
 
+from ..content import topic_categories
 from ..db.engine import SessionLocal
 from ..db.models import Topic, Video
 from ..media import stock_clients
@@ -14,6 +17,17 @@ from .job_queue import enqueue
 from .rendering import action_result, iso, render
 
 router = APIRouter()
+
+
+def _demand_tooltip(meta_json: str | None) -> str:
+    """Human-readable evidence behind a demand score: top competing videos + view counts."""
+    if not meta_json:
+        return ""
+    try:
+        meta = json.loads(meta_json)
+    except (ValueError, TypeError):
+        return ""
+    return " | ".join(f"{v['views']:,} — {v['title'][:50]}" for v in meta.get("top", []))
 
 
 @router.get("/topics")
@@ -39,10 +53,13 @@ def list_topics(request: Request, status: str | None = None):
                 )
         topics = [
             {"id": t.id, "title": t.title, "angle": t.angle, "status": t.status,
+             "category": topic_categories.label(t.category),
+             "demand_score": t.demand_score, "demand_tooltip": _demand_tooltip(t.demand_meta),
              "videos": videos_by_topic.get(t.id, []), "created_at": iso(t.created_at)}
             for t in rows
         ]
-    return render(request, "topics.html", {"topics": topics, "status": status})
+    return render(request, "topics.html",
+                  {"topics": topics, "status": status, "categories": topic_categories.CATEGORIES})
 
 
 @router.get("/topics/{topic_id}/commons-coverage")
@@ -63,8 +80,8 @@ def commons_coverage(request: Request, topic_id: int):
 
 
 @router.post("/topics/gen-topics")
-def gen_topics(request: Request, n: int = Form(5)):
-    job = enqueue("gen-topics", params={"n": n})
+def gen_topics(request: Request, n: int = Form(5), category: str = Form("maritime")):
+    job = enqueue("gen-topics", params={"n": n, "category": topic_categories.valid(category)})
     return action_result(request, job, "/jobs")
 
 
