@@ -9,7 +9,7 @@ from typing import Optional
 import typer
 
 from ..logging_setup import setup_logging
-from . import analytics_puller, health, keepalive, pipeline_runner, scheduler, validation
+from . import analytics_puller, dependency_check, health, keepalive, pipeline_runner, scheduler, validation
 
 
 def register(app: typer.Typer) -> None:
@@ -17,6 +17,7 @@ def register(app: typer.Typer) -> None:
     def run_scheduler_cmd() -> None:
         """Foreground always-on operator: produce / publish (jittered) / analytics / keepalive."""
         setup_logging()
+        dependency_check.warn_if_missing()  # surface a drifted venv at boot, not mid-job
         scheduler.run_scheduler()
 
     @app.command("run-pipeline")

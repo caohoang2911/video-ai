@@ -29,6 +29,9 @@ _ROUTERS = (
 
 
 def create_app(output_dir: Path | None = None) -> FastAPI:
+    from ..ops.dependency_check import warn_if_missing  # local import: keep app import light
+
+    warn_if_missing()  # surface a drifted venv (e.g. missing sentence-transformers) at boot
     app = FastAPI(title="AI Operator Control Panel", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
     @app.middleware("http")

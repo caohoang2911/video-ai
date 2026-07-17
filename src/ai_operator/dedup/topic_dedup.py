@@ -20,8 +20,13 @@ _model = None
 def _get_model():
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer  # heavy: lazy-loaded
-
+        try:
+            from sentence_transformers import SentenceTransformer  # heavy: lazy-loaded
+        except ImportError as exc:  # a drifted venv -> fail with the one-line fix, not a cryptic import
+            raise RuntimeError(
+                "Topic dedup needs 'sentence-transformers' (a declared base dependency) but it "
+                "is not installed — the venv is out of sync. Run `pip install -e .` in the venv."
+            ) from exc
         _model = SentenceTransformer(DEDUP_EMBED_MODEL)
     return _model
 
@@ -49,9 +54,14 @@ def is_duplicate(topic_name: str, threshold: float = DEDUP_COSINE_THRESHOLD) -> 
     return max_similarity(topic_name) >= threshold
 
 
-def record(topic_name: str) -> None:
-    """Persist a topic's embedding after it has been accepted for production."""
-    emb = _embed(topic_name).tobytes()
+def record(topic_name: str, session=None) -> None:
+    """Persist a topic's embedding after it has been accepted for production. Pass `session` to
+    write within an existing transaction — nesting a second write session inside an open one
+    self-deadlocks SQLite's single writer (busy_timeout then SQLITE_BUSY)."""
+    row = TopicHistory(topic_name=topic_name, embedding=_embed(topic_name).tobytes())
+    if session is not None:
+        session.add(row)  # caller owns the commit
+        return
     with SessionLocal() as s:
-        s.add(TopicHistory(topic_name=topic_name, embedding=emb))
+        s.add(row)
         s.commit()
