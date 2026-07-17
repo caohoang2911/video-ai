@@ -30,11 +30,26 @@ def _demand_tooltip(meta_json: str | None) -> str:
     return " | ".join(f"{v['views']:,} — {v['title'][:50]}" for v in meta.get("top", []))
 
 
+def _demand_reason(meta_json: str | None) -> str:
+    """Why the score is what it is: demand (median views/video) vs competition (strong incumbents)."""
+    if not meta_json:
+        return ""
+    try:
+        meta = json.loads(meta_json)
+    except (ValueError, TypeError):
+        return ""
+    mv = meta.get("median_views", 0) or 0
+    views = f"{mv / 1e6:.1f}M" if mv >= 1_000_000 else (f"{mv / 1e3:.0f}K" if mv >= 1_000 else str(mv))
+    return f"~{views} view/video · {meta.get('competition', 0)} video mạnh"
+
+
 @router.get("/topics")
-def list_topics(request: Request, status: str | None = None):
+def list_topics(request: Request, status: str | None = None, category: str | None = None):
     stmt = select(Topic).order_by(Topic.created_at.desc())
     if status:
         stmt = stmt.where(Topic.status == status)
+    if category:
+        stmt = stmt.where(Topic.category == category)
     with SessionLocal() as s:
         rows = s.scalars(stmt).all()
         # Production status per topic: the main video(s) built from it and their pipeline
@@ -52,14 +67,16 @@ def list_topics(request: Request, status: str | None = None):
                     {"id": v.id, "state": v.state}
                 )
         topics = [
-            {"id": t.id, "title": t.title, "angle": t.angle, "status": t.status,
+            {"id": t.id, "title": t.title, "angle": t.angle, "angle_vi": t.angle_vi, "status": t.status,
              "category": topic_categories.label(t.category),
              "demand_score": t.demand_score, "demand_tooltip": _demand_tooltip(t.demand_meta),
+             "demand_reason": _demand_reason(t.demand_meta),
              "videos": videos_by_topic.get(t.id, []), "created_at": iso(t.created_at)}
             for t in rows
         ]
     return render(request, "topics.html",
-                  {"topics": topics, "status": status, "categories": topic_categories.CATEGORIES})
+                  {"topics": topics, "status": status, "current_category": category,
+                   "categories": topic_categories.CATEGORIES})
 
 
 @router.get("/topics/{topic_id}/commons-coverage")

@@ -18,6 +18,7 @@ class Topic(Base):
     slug: Mapped[str] = mapped_column(String(200), index=True)
     title: Mapped[str] = mapped_column(String(300))
     angle: Mapped[str | None] = mapped_column(Text, default=None)          # unique POV = originality
+    angle_vi: Mapped[str | None] = mapped_column(Text, default=None)       # Vietnamese gloss of the angle
     source_notes: Mapped[str | None] = mapped_column(Text, default=None)
     status: Mapped[str] = mapped_column(String(20), default="backlog")     # backlog|used|rejected
     category: Mapped[str] = mapped_column(String(20), default="maritime", index=True)  # sub-niche

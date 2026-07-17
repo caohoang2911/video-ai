@@ -22,6 +22,7 @@ _PENDING: tuple[tuple[str, str, str], ...] = (
     ("topics", "category", "VARCHAR(20) DEFAULT 'maritime'"),
     ("topics", "demand_score", "INTEGER"),
     ("topics", "demand_meta", "TEXT"),
+    ("topics", "angle_vi", "TEXT"),
 )
 
 

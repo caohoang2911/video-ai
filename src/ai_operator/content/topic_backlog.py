@@ -35,8 +35,27 @@ def _suggest_system_prompt(category: str) -> str:
         "distinct from the examples given — never repeat an example or a well-worn one "
         "(e.g. Titanic). Each topic needs a unique angle: the specific human, investigative, or "
         "political thread that makes it worth telling. Respond with ONLY minified JSON: "
-        '{"topics":[{"title":str,"angle":str,"source_hint":str}, ...]}'
+        '{"topics":[{"title":str,"angle":str,"angle_vi":str (a natural Vietnamese translation of '
+        'angle),"source_hint":str}, ...]}'
     )
+
+
+def translate_to_vi(text: str | None) -> str | None:
+    """Best-effort natural-Vietnamese gloss of an English angle (for the bilingual topics table).
+    Returns None on empty input or any LLM failure — never blocks the caller."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        raw = complete(
+            "Translate the user's text into natural, concise Vietnamese. Output ONLY the "
+            "translation — no quotes, no notes, no original text.",
+            text, max_tokens=400, step="translate_angle",
+        )
+        return raw.strip() or None
+    except Exception as exc:  # noqa: BLE001 - translation is a nicety; never break the caller
+        log.warning("translate_to_vi failed: %s", exc)
+        return None
 
 
 def load_seeds() -> list[dict]:
@@ -102,8 +121,8 @@ def suggest_topics(n: int, category: str = "maritime", video_id: int | None = No
             title = item["title"].strip()
             topic = Topic(
                 slug=_slugify(title), title=title, angle=item.get("angle"),
-                source_notes=item.get("source_hint"), status="backlog",
-                category=category, demand_score=demand, demand_meta=meta,
+                angle_vi=item.get("angle_vi"), source_notes=item.get("source_hint"),
+                status="backlog", category=category, demand_score=demand, demand_meta=meta,
             )
             s.add(topic)
             record(title, session=s)
@@ -111,6 +130,41 @@ def suggest_topics(n: int, category: str = "maritime", video_id: int | None = No
         s.commit()
     log.info("suggest_topics[%s]: created %d/%d requested (rest were duplicates)", category, len(created), n)
     return created
+
+
+def backfill_topic_signals(limit: int | None = None) -> int:
+    """Auto-fill missing demand_score / angle_vi on backlog topics (idempotent — already-filled
+    ones are skipped). YouTube + translate lookups run OUTSIDE any write transaction; each topic
+    is committed in its own short transaction. Returns the number of topics updated."""
+    with SessionLocal() as s:
+        targets = [
+            (t.id, t.title, t.angle, t.demand_score is None, t.angle_vi is None and bool(t.angle))
+            for t in s.scalars(select(Topic).where(Topic.status == "backlog")).all()
+            if t.demand_score is None or (t.angle_vi is None and t.angle)
+        ]
+    if limit is not None:
+        targets = targets[:limit]
+
+    updated = 0
+    for tid, title, angle, need_demand, need_vi in targets:
+        demand = meta = vi = None
+        if need_demand:
+            demand, meta = topic_demand.score_json(title.split(":")[0].strip())
+        if need_vi:
+            vi = translate_to_vi(angle)
+        with SessionLocal() as s:
+            t = s.get(Topic, tid)
+            if t is None:
+                continue
+            if need_demand:
+                t.demand_score, t.demand_meta = demand, meta
+            if need_vi and vi:
+                t.angle_vi = vi
+            s.commit()
+        updated += 1
+    if updated:
+        log.info("backfill_topic_signals: filled demand/angle_vi on %d topic(s)", updated)
+    return updated
 
 
 def pick_next() -> Topic | None:

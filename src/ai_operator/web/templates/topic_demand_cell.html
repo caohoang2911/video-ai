@@ -1,0 +1,8 @@
+{# fragment htmx: ô "Tiềm năng" (demand YouTube 0-100) — chấm tự động; hiện điểm + LÝ DO
+   (cầu = median view, cạnh tranh = số video mạnh). Hover xem video cạnh tranh. #}
+{% if demand_score is not none %}
+<span title="{{ demand_tooltip }}"><strong>{{ demand_score }}</strong></span>
+{% if demand_reason %}<div class="small muted">{{ demand_reason }}</div>{% endif %}
+{% else %}
+<span class="muted small">—</span>
+{% endif %}

@@ -144,6 +144,27 @@ def test_suggest_topics_tags_category_and_demand(monkeypatch):
 # --------------------------------------------------------------------------------------
 
 
+def test_translate_to_vi_best_effort(monkeypatch):
+    assert topic_backlog.translate_to_vi("") is None
+    assert topic_backlog.translate_to_vi("   ") is None
+    monkeypatch.setattr(topic_backlog, "complete", lambda *a, **k: "  Bản dịch tiếng Việt  ")
+    assert topic_backlog.translate_to_vi("An English angle") == "Bản dịch tiếng Việt"
+
+    def _boom(*a, **k):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(topic_backlog, "complete", _boom)
+    assert topic_backlog.translate_to_vi("An English angle") is None  # never blocks the caller
+
+
+def test_demand_reason_formats_views_and_competition():
+    from ai_operator.web.routes_topics import _demand_reason
+
+    assert _demand_reason(json.dumps({"median_views": 1_200_000, "competition": 3})) == "~1.2M view/video · 3 video mạnh"
+    assert _demand_reason(json.dumps({"median_views": 4_000, "competition": 0})) == "~4K view/video · 0 video mạnh"
+    assert _demand_reason(None) == "" and _demand_reason("not json") == ""
+
+
 def test_missing_critical_reports_absent_modules(monkeypatch):
     import importlib.util
 

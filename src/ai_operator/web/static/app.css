@@ -274,3 +274,11 @@ details summary { cursor: pointer; color: var(--muted); margin: .3rem 0; }
 .ab-thumbs figcaption { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
 .ab-winner { margin-top: .6rem; display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
 .ab-winner select { max-width: 100%; }
+
+/* topics: category filter chips + on-demand mini buttons + bilingual angle */
+.filters { display: flex; flex-wrap: wrap; gap: .4rem; margin: .6rem 0 1rem; }
+.filters a { padding: .15rem .6rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: .85rem; }
+.filters a.active { background: var(--line); color: inherit; font-weight: 600; }
+button.mini { padding: .1rem .5rem; font-size: .78rem; line-height: 1.4; }
+.angle-vi { color: #6ea8c8; margin-top: .15rem; }
+.htmx-request.demand-cell, .htmx-request button.mini, td.htmx-request { opacity: .55; }

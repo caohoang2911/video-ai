@@ -17,6 +17,14 @@
   </form>
 </div>
 
+{# lọc theo danh mục #}
+<div class="filters small">
+  <a href="/topics"{% if not current_category %} class="active"{% endif %}>Tất cả</a>
+  {% for key, c in categories.items() %}
+  <a href="/topics?category={{ key }}"{% if current_category == key %} class="active"{% endif %}>{{ c.label }}</a>
+  {% endfor %}
+</div>
+
 <table>
   <thead><tr><th>ID</th><th>Tiêu đề</th><th>Danh mục</th><th>Tiềm năng</th><th>Góc nhìn</th><th>Tư liệu Commons</th><th>Trạng thái</th><th>Sản xuất</th></tr></thead>
   <tbody>
@@ -25,14 +33,22 @@
       <td>{{ t.id }}</td>
       <td>{{ t.title }}</td>
       <td class="small">{{ t.category }}</td>
-      {# điểm tiềm năng (demand YouTube 0-100); hover xem video cạnh tranh #}
-      <td class="small" title="{{ t.demand_tooltip }}">
-        {% if t.demand_score is not none %}<strong>{{ t.demand_score }}</strong>{% else %}<span class="muted">—</span>{% endif %}
+      {# điểm tiềm năng (demand YouTube 0-100) — chấm theo yêu cầu, hover xem video cạnh tranh #}
+      <td class="small demand-cell">
+        {% with topic_id=t.id, demand_score=t.demand_score, demand_tooltip=t.demand_tooltip, demand_reason=t.demand_reason %}
+          {% include "topic_demand_cell.html" %}
+        {% endwith %}
       </td>
-      <td class="muted small">{{ t.angle or '—' }}</td>
-      {# độ phủ ảnh tư liệu thật: nạp async từng ô (Commons rate-limit 1 req/s) #}
-      <td hx-get="/topics/{{ t.id }}/commons-coverage" hx-trigger="load" hx-swap="innerHTML">
-        <span class="muted small">đang dò…</span>
+      {# góc nhìn song ngữ (EN + VN) #}
+      <td>
+        {% with topic_id=t.id, angle=t.angle, angle_vi=t.angle_vi %}
+          {% include "topic_angle_cell.html" %}
+        {% endwith %}
+      </td>
+      {# độ phủ ảnh tư liệu thật — bấm để dò (Commons rate-limit; không auto để khỏi nghẽn UI) #}
+      <td>
+        <button class="mini" hx-get="/topics/{{ t.id }}/commons-coverage"
+                hx-target="closest td" hx-swap="innerHTML" hx-indicator="closest td">dò hình</button>
       </td>
       <td>
         {% if t.status == 'backlog' %}<span class="pill pending">chờ sản xuất</span>
