@@ -20,6 +20,7 @@ DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 
 # --- Image gen ---
 FAL_FLUX_USD_PER_IMAGE = 0.025
+FAL_KONTEXT_USD_PER_IMAGE = 0.04  # FLUX.1 Kontext [pro] image-edit — pricier than dev gen
 
 # --- Estimation safety ---
 COST_BUFFER = 1.10  # +10% headroom on every estimate

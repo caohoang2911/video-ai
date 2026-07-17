@@ -37,7 +37,10 @@
 - [ ] **PEXELS_API_KEY** + **PIXABAY_API_KEY** (free dev keys).
 - [ ] **FAL_KEY** _(**required** with the default `IMAGE_GEN_BACKEND=fal_flux` — fal.ai FLUX.1-dev is now the
       primary image generator: ~$0.025/image, commercial output license via fal, ~$0.30/video / ~$4/month.
-      Set `IMAGE_GEN_BACKEND=sdxl` for a free, fully-offline render using local SDXL first)_.
+      Set `IMAGE_GEN_BACKEND=sdxl` for a free, fully-offline render using local SDXL first)_. The same key
+      powers the **thumbnail hero** (FLUX Kontext relight of the primary archival photo, ~$0.04/video —
+      toggle off with `THUMBNAIL_KONTEXT_ENHANCE=false`; `THUMB_RELEVANCE_MIN` gates which archival photos
+      may face the video before a synthetic drama frame stands in).
 - [ ] **TELEGRAM_BOT_TOKEN** (from @BotFather `/newbot`) + **TELEGRAM_CHAT_ID** (run `operator get-chat-id`).
 
 ## Budget / infra

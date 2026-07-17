@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     # OFF without removing their API keys — e.g. a provider keeps returning content-mismatched
     # hits for the channel's niche.
     DISABLED_VISUAL_SOURCES: str = ""
+    # Thumbnail hero: minimum CLIP cosine relevance (subject vs image) an archival photo must
+    # clear to face the video — blocks good-looking but wrong-subject archives (e.g. the wrong
+    # ship's livery). Below it the hero falls back to a synthetic FLUX drama frame. CLIP cosine
+    # for a relevant photo lands ~0.20-0.30; raise to be stricter. Gate is skipped if CLIP is
+    # unavailable (no torch/model) so render never blocks on it.
+    THUMB_RELEVANCE_MIN: float = 0.22
+    # Enhance the primary thumbnail hero (real archival) through FLUX Kontext — subject-
+    # preserving relight+grade, ~$0.04/video. Off => PIL grade only (no fal call).
+    THUMBNAIL_KONTEXT_ENHANCE: bool = True
     # Char allowance of the operator's ACTUAL ElevenLabs plan (dashboard "credits"). The old
     # hard-coded Creator-tier assumption let the pipeline plan spend far past a smaller
     # plan's real wall. Default stays Creator (100k); set to your plan in .env.

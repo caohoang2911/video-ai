@@ -8,6 +8,7 @@ from ..constants import (
     DEFAULT_ANTHROPIC_MODEL,
     ELEVENLABS_USD_PER_1K_CHARS,
     FAL_FLUX_USD_PER_IMAGE,
+    FAL_KONTEXT_USD_PER_IMAGE,
     OPENAI_TTS1_USD_PER_1M_CHARS,
 )
 
@@ -32,6 +33,10 @@ def estimate_fal_images(n: int) -> float:
     return n * FAL_FLUX_USD_PER_IMAGE * COST_BUFFER
 
 
+def estimate_fal_kontext(n: int) -> float:
+    return n * FAL_KONTEXT_USD_PER_IMAGE * COST_BUFFER
+
+
 def estimate_step(provider: str, **units) -> float:
     """Dispatch by provider. Free providers (edge-tts, chatterbox, stock) => 0.0."""
     provider = provider.lower()
@@ -47,4 +52,6 @@ def estimate_step(provider: str, **units) -> float:
         )
     if provider == "fal":
         return estimate_fal_images(units.get("images", 0))
+    if provider == "fal_kontext":
+        return estimate_fal_kontext(units.get("images", 0))
     return 0.0

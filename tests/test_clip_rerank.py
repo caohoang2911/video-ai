@@ -62,3 +62,20 @@ def test_rank_candidates_keeps_failed_thumb_candidates_last(monkeypatch):
 
     ranked = vf._rank_candidates("naval battle", _cands())
     assert [c["url"] for c in ranked] == ["c", "a", "b"]  # c,a ranked (reversed); b (no thumb) last
+
+
+# --------------------------------------------------------------------------------------
+# clip_reranker.score -- absolute relevance for the thumbnail gate, best-effort None
+# --------------------------------------------------------------------------------------
+
+
+def test_score_none_for_empty_text():
+    assert clip_reranker.score("", Path("a.jpg")) is None
+
+
+def test_score_none_when_model_unavailable(monkeypatch):
+    def _boom():
+        raise RuntimeError("no model")
+
+    monkeypatch.setattr(clip_reranker, "_model", _boom)
+    assert clip_reranker.score("estonia ferry", Path("a.jpg")) is None

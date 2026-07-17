@@ -65,3 +65,30 @@ def rank(text: str, image_paths: list[Path]) -> list[int]:
     except Exception as exc:  # noqa: BLE001 - re-rank is best-effort; keep the original order
         log.warning("CLIP rerank failed (%s) -> keeping original order", exc)
         return list(range(len(image_paths)))
+
+
+def score(text: str, image_path: Path) -> float | None:
+    """Raw CLIP cosine similarity in [-1, 1] between `text` and one image, or None on any
+    failure (no torch/model/unreadable image). Cosine — NOT the softmax logit `rank` uses —
+    so callers can threshold an absolute relevance value (relevant photos land ~0.20-0.30).
+    """
+    if not text:
+        return None
+    try:
+        from PIL import Image
+
+        model, processor, torch = _model()
+        image = Image.open(image_path).convert("RGB")
+        inputs = processor(
+            text=[text], images=[image], return_tensors="pt", padding=True, truncation=True
+        )
+        with torch.no_grad():
+            # Reuse the same full forward `rank` relies on; `.image_embeds`/`.text_embeds` are
+            # the projected (pre-norm) CLIP embeddings -> normalize + dot = cosine similarity.
+            out = model(**inputs)
+        img_emb = out.image_embeds / out.image_embeds.norm(p=2, dim=-1, keepdim=True)
+        txt_emb = out.text_embeds / out.text_embeds.norm(p=2, dim=-1, keepdim=True)
+        return float((img_emb @ txt_emb.T).item())
+    except Exception as exc:  # noqa: BLE001 - gate is best-effort; None => skip the filter
+        log.warning("CLIP score failed (%s) -> gate skipped", exc)
+        return None
