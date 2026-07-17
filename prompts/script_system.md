@@ -136,9 +136,35 @@ thumbnail (not a reworded copy of it).
      That Capsized the SS Eastland", "The Warning Chicago Ignored in 1915".
 - Never clickbait past the facts: the title's promise must be paid off in the script.
 
-**Thumbnail text: 3 words MAXIMUM** (under ~14 characters beats longer text in every
-eye-tracking study — it must be readable at postage-stamp size). Make it a gut-punch that
-pairs with its title, not a caption: "10,000 GONE.", "NO RESCUE.", "ONE MISTAKE."
+**Thumbnail text — the on-image hook, the single biggest click driver.** The ship/event
+name and year already sit on the thumbnail's kicker AND in the title, so `thumbnail_text`
+must **carry the emotional GAP, never repeat the entity** (title = the searchable *known*;
+thumbnail = the *want-to-know*). They are partners, not twins.
+
+Length: **3–6 words, aim 4–5** (the template wraps it to 2–3 bold lines; past 6 words it is
+unreadable at phone size).
+
+Hit the **MIDDLE of the information scale** — click-through is highest at a *partial* reveal,
+not a vague tease and not the full answer (measured inverted-U: a headline that is already
+specific loses clicks when you add more specifics; a vague one gains them). Build the gap:
+- a **definite reference** that opens a mental "file" but withholds its content — "THE BOLT
+  THAT…", "THE ORDER NO ONE…", "THE WARNING THEY…", "THE WRECK THEY…";
+- a **concrete stake tied to human loss** — a death toll, a countdown, a span of years:
+  "852 GONE IN 55 MINUTES", "SEALED FOR 26 YEARS";
+- at most **one** earned intensifier — "DEADLIEST", "STILL", "NEVER", "ONE".
+**Withhold the payoff** (the how/why the video answers). Never resolve the mystery on the image.
+
+The 3 variants each use a DIFFERENT gap type, and each thumbnail must carry a DIFFERENT
+device than ITS OWN title (partners, not twins): if a title already states the death toll or
+time, that variant's thumbnail must NOT (use a definite-reference or withheld-cause gap
+instead); if the title poses the mystery, the thumbnail supplies the number. Gap types:
+  1. **Definite-reference gap** — "THE BOLT THAT DOOMED HER".
+  2. **Number + loss stake** — "852 GONE IN 55 MINUTES" (only if the title does NOT already say it).
+  3. **Withheld cause / injustice** — "SEALED FOR 26 YEARS", "THE ORDER THEY BURIED".
+Calibration — avoid both failure modes:
+- ✗ too vague (no reachable gap): "NEVER EXPLAINED", "WHY?", "NO RESCUE".
+- ✗ too concrete (gap already closed): "ONE BOLT FAILED", "844 DIED FROM A BROKEN RUDDER".
+Still never clickbait past the facts — the gap must be paid off in the script.
 
 ## SEO: tags & hashtags
 
@@ -179,7 +205,7 @@ exactly this shape:
     {"beat_id": 1, "narration_span": "string", "keywords": ["string"], "mood": "string", "chapter_title": "string — 3-6 word searchable label", "visual_kind": "illustration|footage", "image_prompt": "string — exact scene to draw (illustration beats only, else empty)"}
   ],
   "title_options": [
-    {"title": "string — full video title", "thumbnail_text": "string — <=5 words for the thumbnail"}
+    {"title": "string — full video title", "thumbnail_text": "string — 3-6 word on-image hook: a definite-reference or number+stake GAP that withholds the payoff; must NOT repeat the title's ship/event name"}
   ],
   "description": "string — YouTube description, 2-4 sentences; the FIRST sentence must stand alone under 125 characters (it is the only line shown in search/suggested) and re-hook, not summarize",
   "tags": ["string", "... 10-15 SEO tags ..."],
