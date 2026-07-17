@@ -1,4 +1,6 @@
-"""fal.ai Flux -- tier-3 visual fallback, used only when local SDXL is unavailable/times out.
+"""fal.ai Flux -- the primary still generator by default (IMAGE_GEN_BACKEND="fal_flux"); local
+SDXL is the offline fallback. Set IMAGE_GEN_BACKEND="sdxl" to swap the order (SDXL first, fal
+fallback) for a free/offline run.
 
 `fal-client` is an opt-in extra (`pip install .[cloud]`), NOT a base dependency, so the
 import is deferred into `generate()` -- this module must stay importable with FAL_KEY unset

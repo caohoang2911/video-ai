@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     PEXELS_API_KEY: str | None = None
     PIXABAY_API_KEY: str | None = None
     FAL_KEY: str | None = None
+    # Which generator serves the last-resort still tier (maps/illustrations/stock misses).
+    # "fal_flux": fal.ai FLUX.1-dev first (faster + higher quality, ~$0.025/image, commercial
+    # output license via fal), with local SDXL as the OFFLINE fallback when fal/network fails.
+    # "sdxl": local SDXL first (free, fully offline) with fal as fallback — rollback / no-network.
+    IMAGE_GEN_BACKEND: str = "fal_flux"
     # Operator kill-switch: comma-separated source names ("pixabay,pexels,wikimedia") turned
     # OFF without removing their API keys — e.g. a provider keeps returning content-mismatched
     # hits for the channel's niche.

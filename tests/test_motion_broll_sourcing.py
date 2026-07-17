@@ -335,6 +335,81 @@ def test_generate_visual_prefers_image_prompt_over_keywords(monkeypatch, tmp_pat
     assert seen == ["a written scene"]
 
 
+def _stub_generators(monkeypatch, tmp_path, *, fal_fails=False):
+    """Record call order; each generator returns a distinct path unless told to fail.
+    Returns the `calls` list so a test can assert which tier ran (and in what order)."""
+    calls: list[str] = []
+    monkeypatch.delenv("AI_OPERATOR_DISABLE_SDXL", raising=False)
+    monkeypatch.delenv("AI_OPERATOR_DISABLE_IMAGE_GEN", raising=False)
+
+    def _fal(*a, **k):
+        calls.append("fal")
+        if fal_fails:
+            raise RuntimeError("fal unavailable")
+        return tmp_path / "fal.png"
+
+    def _sdxl(*a, **k):
+        calls.append("sdxl")
+        return tmp_path / "sdxl.png"
+
+    monkeypatch.setattr(vf.cloud_flux, "generate", _fal)
+    monkeypatch.setattr(vf.local_sdxl, "generate", _sdxl)
+    return calls
+
+
+def test_generate_visual_fal_flux_backend_prefers_fal(monkeypatch, tmp_path):
+    """IMAGE_GEN_BACKEND=fal_flux: fal FLUX is primary; local SDXL is not touched on success."""
+    monkeypatch.setattr(vf.settings, "IMAGE_GEN_BACKEND", "fal_flux")
+    calls = _stub_generators(monkeypatch, tmp_path)
+    _path, label = vf._generate_visual(1, ["ocean"], "tense", is_diagram=False)
+    assert label == "fal"
+    assert calls == ["fal"]  # SDXL fallback never reached
+
+
+def test_generate_visual_fal_failure_falls_back_to_local_sdxl(monkeypatch, tmp_path):
+    """fal outage must not break a render: the beat drops to the offline SDXL fallback."""
+    monkeypatch.setattr(vf.settings, "IMAGE_GEN_BACKEND", "fal_flux")
+    calls = _stub_generators(monkeypatch, tmp_path, fal_fails=True)
+    _path, label = vf._generate_visual(1, ["ocean"], "tense", is_diagram=False)
+    assert label == "sdxl"
+    assert calls == ["fal", "sdxl"]  # tried fal first, then fell back
+
+
+def test_generate_visual_sdxl_backend_prefers_local(monkeypatch, tmp_path):
+    """IMAGE_GEN_BACKEND=sdxl (rollback / fully-offline): local SDXL first, fal untouched."""
+    monkeypatch.setattr(vf.settings, "IMAGE_GEN_BACKEND", "sdxl")
+    calls = _stub_generators(monkeypatch, tmp_path)
+    _path, label = vf._generate_visual(1, ["ocean"], "tense", is_diagram=False)
+    assert label == "sdxl"
+    assert calls == ["sdxl"]  # fal fallback never reached
+
+
+def test_generate_visual_disable_image_gen_env_skips_both(monkeypatch, tmp_path):
+    """AI_OPERATOR_DISABLE_IMAGE_GEN short-circuits BEFORE any generator (fal or SDXL) runs."""
+    calls = _stub_generators(monkeypatch, tmp_path)
+    monkeypatch.setenv("AI_OPERATOR_DISABLE_IMAGE_GEN", "1")
+    assert vf._generate_visual(1, ["ocean"], "tense", is_diagram=False) is None
+    assert calls == []
+
+
+def test_run_with_timeout_bounds_wall_clock():
+    """The timeout is a REAL deadline: a slow generator surfaces TimeoutError at ~timeout, not
+    after the worker finishes. Guards against reintroducing a `with ThreadPoolExecutor` block,
+    whose shutdown(wait=True) on exit would join the worker and defeat the fal->SDXL fallback."""
+    import time
+    from concurrent.futures import TimeoutError as FuturesTimeout
+
+    import pytest
+
+    def slow(*_a, **_k):
+        time.sleep(2.0)
+
+    t0 = time.monotonic()
+    with pytest.raises(FuturesTimeout):
+        vf._run_with_timeout(slow, 0.3, "prompt", is_diagram=False)
+    assert time.monotonic() - t0 < 1.0  # bounded near 0.3s, not ~2.0s
+
+
 def test_clips_needed_scales_with_beat_length():
     assert vf._clips_needed(0) == 1          # unknown -> single clip
     assert vf._clips_needed(10) == 1         # short beat -> one clip

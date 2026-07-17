@@ -1,4 +1,7 @@
-"""4-tier visual acquisition: stock VIDEO -> stock photo -> local SDXL -> fal.ai.
+"""4-tier visual acquisition: stock VIDEO -> stock photo -> generated still -> fallback generator.
+The generated-still tier runs fal.ai FLUX.1-dev by default (higher quality) with local SDXL as the
+offline fallback; IMAGE_GEN_BACKEND="sdxl" swaps the order (SDXL first). Historically the note below
+read "local SDXL -> fal.ai" (SDXL was primary); the tier order is now backend-driven.
 
 Motion b-roll is tried FIRST so the video reads as documentary footage, not a static slideshow
 (the "AI slop" signature). Where maritime footage is scarce it falls back to a stock photo
@@ -24,7 +27,7 @@ import requests
 from .. import checkpoint
 from ..assembler.beat_timing import compute_beat_durations
 from ..assembler.ffmpeg_encode import probe_duration
-from ..config import OUTPUT_DIR
+from ..config import OUTPUT_DIR, settings
 from ..db.engine import SessionLocal
 from ..db.models import Video
 from ..logging_setup import get_logger
@@ -40,8 +43,11 @@ STOCK_VIDEO_TIMEOUT_SEC = 8   # video search returns more metadata than photo se
 # but up to ~5min/image under load (thermal/memory pressure, gen-all's 10 back-to-back images).
 # The worker pool waits for completion on exit regardless, so a too-tight bound just DISCARDS a
 # finished image and drops the beat to a (rate-limited) stock fallback -- keep it generous.
-SDXL_TIMEOUT_SEC = 600
-FAL_TIMEOUT_SEC = 30
+LOCAL_GEN_TIMEOUT_SEC = 600
+# fal FLUX.1-dev returns in ~3-6s idle, but the hosted queue can spike under load. As the PRIMARY
+# generator now (not a rare fallback), give it room before dropping a beat to the slow local
+# SDXL fallback -- a premature timeout trades a 60s wait for a multi-minute local render.
+FAL_TIMEOUT_SEC = 60
 COHERENCE_BATCH_SIZE = 10
 COHERENCE_MIN_RATIO = 0.8
 MOTION_TARGET_RATIO = 0.5     # aim for >=50% of beats on real footage; below this is logged, not failed
@@ -68,12 +74,18 @@ def _is_diagram_beat(beat: dict) -> bool:
 
 
 def _run_with_timeout(fn, timeout_sec: float, *args, **kwargs):
-    """Local SDXL/fal calls are synchronous; bound their wall-clock time with a worker thread
-    (the timed-out thread is abandoned, not killed -- acceptable since both tiers are idempotent
-    single-image generations with no shared state)."""
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(fn, *args, **kwargs)
-        return future.result(timeout=timeout_sec)
+    """Local SDXL/fal calls are synchronous; bound their wall-clock time with a worker thread.
+    On timeout the worker is ABANDONED (`shutdown(wait=False)`), NOT joined, so `timeout_sec` is
+    a real deadline -- a stuck fal hosted-queue drops to the next tier after the bound instead of
+    hanging the beat. (A `with ThreadPoolExecutor()` block would `shutdown(wait=True)` on exit and
+    block until the worker finished, defeating the timeout.) Abandoning is safe: both tiers are
+    idempotent single-image generations with no shared state -- a late worker just writes an orphan
+    temp file the caller never reads."""
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(fn, *args, **kwargs).result(timeout=timeout_sec)
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _gather_candidates(query: str, pexels_fn, pixabay_fn, timeout: float) -> list[dict]:
@@ -256,32 +268,38 @@ def _acquire_broll_clips(
 def _generate_visual(
     beat_id: int, keywords: list[str], mood: str, is_diagram: bool, image_prompt: str = ""
 ) -> tuple[Path, str] | None:
-    # Escape hatch for a fast, fully stock-footage (no-SDXL) render: AI_OPERATOR_DISABLE_SDXL
-    # turns off image generation so every beat resolves to stock (a diagram beat then falls to
-    # a stock photo via the last-resort tier instead of a slow local SDXL render).
-    if os.getenv("AI_OPERATOR_DISABLE_SDXL"):
+    # Escape hatch for a fast, fully stock-footage (no-generation) render: turns off image
+    # generation so every beat resolves to stock (a diagram beat then falls to a stock photo
+    # via the last-resort tier instead of a slow render). AI_OPERATOR_DISABLE_SDXL kept as an
+    # alias so existing gen-all scripts keep working after the SDXL->fal-primary switch.
+    if os.getenv("AI_OPERATOR_DISABLE_IMAGE_GEN") or os.getenv("AI_OPERATOR_DISABLE_SDXL"):
         return None
 
     # The script's per-beat image_prompt (a written-out scene: subject, era details, mood,
     # composition) draws far closer to the narration than a bag of search keywords.
     prompt = image_prompt.strip() or ", ".join(k for k in keywords if k) or mood
 
-    try:
-        t0 = time.monotonic()
-        image = _run_with_timeout(local_sdxl.generate, SDXL_TIMEOUT_SEC, prompt, is_diagram=is_diagram)
-        log.info("beat %s: sdxl generated in %.1fs", beat_id, time.monotonic() - t0)
-        return image, "sdxl"
-    except Exception as exc:
-        log.warning("beat %s: local sdxl unavailable/timed out: %s -- trying fal.ai", beat_id, exc)
+    # Generator tiers in priority order. fal FLUX.1-dev is the primary generator (faster and
+    # higher quality); local SDXL is the offline fallback so a render survives a fal/network
+    # outage. Only an explicit IMAGE_GEN_BACKEND="sdxl" flips to SDXL-first (fully-offline/free
+    # run, rollback); any other/typo'd value keeps the fal-first default rather than silently
+    # dropping fal.
+    fal_tier = (cloud_flux.generate, FAL_TIMEOUT_SEC, "fal")
+    sdxl_tier = (local_sdxl.generate, LOCAL_GEN_TIMEOUT_SEC, "sdxl")
+    sdxl_first = settings.IMAGE_GEN_BACKEND.strip().lower() == "sdxl"
+    tiers = [sdxl_tier, fal_tier] if sdxl_first else [fal_tier, sdxl_tier]
 
-    try:
-        t0 = time.monotonic()
-        image = _run_with_timeout(cloud_flux.generate, FAL_TIMEOUT_SEC, prompt, is_diagram=is_diagram)
-        log.info("beat %s: fal.ai generated in %.1fs", beat_id, time.monotonic() - t0)
-        return image, "fal"
-    except Exception as exc:
-        log.error("beat %s: fal.ai also failed: %s", beat_id, exc)
-        return None
+    for gen_fn, timeout, label in tiers:
+        try:
+            t0 = time.monotonic()
+            image = _run_with_timeout(gen_fn, timeout, prompt, is_diagram=is_diagram)
+            log.info("beat %s: %s generated in %.1fs", beat_id, label, time.monotonic() - t0)
+            return image, label
+        except Exception as exc:
+            log.warning("beat %s: %s generator unavailable/failed: %s", beat_id, label, exc)
+
+    log.error("beat %s: all image generators failed", beat_id)
+    return None
 
 
 def _flush_generated_batch(video_id: int, items: list[_GeneratedItem]) -> list[dict]:
@@ -313,9 +331,9 @@ def acquire(
 ) -> list[dict]:
     """Resolve >=1 visual per beat (motion b-roll first, then stills) and persist via
     asset_store; idempotent. `stills_only` skips the video tier for cheap/offline runs.
-    `force_generate` skips BOTH stock tiers and generates every beat with SDXL -- for
-    period/event topics stock can't serve (a modern city clip for a 1917 harbor), a
-    period-styled illustration tracks the narration better."""
+    `force_generate` skips BOTH stock tiers and generates every beat (fal FLUX or SDXL per
+    IMAGE_GEN_BACKEND) -- for period/event topics stock can't serve (a modern city clip for a
+    1917 harbor), a period-styled illustration tracks the narration better."""
     if checkpoint.is_done(video_id, STEP):
         log.info("video %s: visuals already acquired, skipping", video_id)
         return asset_store.list_assets(video_id)
@@ -392,7 +410,8 @@ def acquire(
                 saved.append(record)
                 continue
 
-        # Tier 3/4: generated stills (SDXL -> fal), graded for style coherence in batches.
+        # Tier 3/4: generated stills (fal FLUX -> SDXL fallback by default; order per
+        # IMAGE_GEN_BACKEND), graded for style coherence in batches.
         generated = _generate_visual(
             beat_id, keywords, mood, is_diagram, image_prompt=beat.get("image_prompt", "")
         )

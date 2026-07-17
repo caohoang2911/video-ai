@@ -35,14 +35,17 @@
       **edge-tts**, which produces a **draft-only** narration: the video is flagged `needs_revoice` and the
       publisher refuses to upload it until it is re-voiced with the brand voice (`operator revoice`).
 - [ ] **PEXELS_API_KEY** + **PIXABAY_API_KEY** (free dev keys).
-- [ ] **FAL_KEY** _(optional — cloud image fallback; P0 uses local/stock)_.
+- [ ] **FAL_KEY** _(**required** with the default `IMAGE_GEN_BACKEND=fal_flux` — fal.ai FLUX.1-dev is now the
+      primary image generator: ~$0.025/image, commercial output license via fal, ~$0.30/video / ~$4/month.
+      Set `IMAGE_GEN_BACKEND=sdxl` for a free, fully-offline render using local SDXL first)_.
 - [ ] **TELEGRAM_BOT_TOKEN** (from @BotFather `/newbot`) + **TELEGRAM_CHAT_ID** (run `operator get-chat-id`).
 
 ## Budget / infra
 
 - [ ] Attach billing to ElevenLabs (Starter). P0 burn ≈ **$0–30/month**.
 - [ ] Confirm runway (design doc recommends ~$4–5K over 1–2 years for a real shot).
-- [ ] Dev machine: this M1 Max 64GB is enough for P0 (local SDXL optional). Deploy target decided later (phase 08).
+- [ ] Dev machine: this M1 Max 64GB is enough for P0. Image generation defaults to fal.ai FLUX.1-dev (cloud);
+      local SDXL is the offline fallback (`IMAGE_GEN_BACKEND=sdxl` to force it). Deploy target decided later (phase 08).
 
 ## Verify when done
 
