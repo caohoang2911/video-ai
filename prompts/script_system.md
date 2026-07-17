@@ -207,6 +207,7 @@ exactly this shape:
   "title_options": [
     {"title": "string — full video title", "thumbnail_text": "string — 3-6 word on-image hook: a definite-reference or number+stake GAP that withholds the payoff; must NOT repeat the title's ship/event name"}
   ],
+  "event_year": "integer — the disaster's canonical 4-digit year (drives the thumbnail kicker)",
   "description": "string — YouTube description, 2-4 sentences; the FIRST sentence must stand alone under 125 characters (it is the only line shown in search/suggested) and re-hook, not summarize",
   "tags": ["string", "... 10-15 SEO tags ..."],
   "hashtags": ["Shipwreck", "MaritimeHistory", "... 3-5, no spaces, no # ..."],

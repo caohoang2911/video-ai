@@ -97,6 +97,9 @@ class ScriptOutput(BaseModel):
     payoff_nodes: list[PayoffNode] = Field(min_length=5)
     shot_list: list[ShotBeat] = Field(min_length=10)
     title_options: list[TitleOption] = Field(min_length=3, max_length=3)
+    # The disaster's canonical 4-digit year — the thumbnail kicker's year when the title carries
+    # none ("...Sealed for 26 Years"). Optional so pre-field scripts still load.
+    event_year: int | None = None
     description: str
     # SEO tags: broad + specific + long-tail. Older scripts may carry fewer, so only the
     # lower bound is enforced; the prompt asks for ~10-15.

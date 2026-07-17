@@ -60,7 +60,10 @@ def generate(video_id: int) -> list[str]:
     archival_ranked, others_ranked, subject = _gated_pools(video_id)
     hero_src, hero_mode, synth_path = _pick_hero(video, archival_ranked, video_id)
 
-    kicker = thumbnail_style.compose_kicker(subject, title)  # clean SUBJECT·YEAR eyebrow, shared
+    # kicker year: title/subject first, else the script's canonical event_year (titles like
+    # "...Sealed for 26 Years" carry no year). credits: per-photo CC BY/BY-SA burn-in lines.
+    kicker = thumbnail_style.compose_kicker(subject, title, event_year=_event_year(video_dir / "script.json"))
+    credits = _archival_credits(video_id)
 
     pool: list[Path] = [hero_src] if hero_src is not None else []
     for p in archival_ranked + others_ranked:
@@ -73,20 +76,22 @@ def generate(video_id: int) -> list[str]:
     for i in range(N_VARIANTS):
         frame_path = video_dir / f"_thumb_frame_{i}.jpg"
         variant_path = video_dir / f"thumb_{VARIANT_LETTERS[i]}.jpg"
+        source = pool[i % len(pool)]
+        credit = credits.get(str(source))  # only real archival photos carry a credit line
         # each variant's punch line pairs with its title option; fall back to a title-derived
         # hook when that option carried no thumbnail_text (older scripts).
         headline = overlays[i] if i < len(overlays) and overlays[i].strip() else \
             thumbnail_style.fallback_headline(title, subject)
         try:
-            _extract_frame(pool[i % len(pool)], frame_path)
+            _extract_frame(source, frame_path)
             # `_prepare_hero` returns True when the frame is ALREADY cinematically graded
             # (Kontext hero / synthetic) -> skip the PIL grade so it is not double-graded.
             already_graded = _prepare_hero(frame_path, hero_mode, video_id) if i == 0 else False
-            _overlay_text(frame_path, headline, variant_path, kicker, grade=not already_graded)
+            _overlay_text(frame_path, headline, variant_path, kicker, grade=not already_graded, credit=credit)
         except Exception as exc:  # noqa: BLE001 - a bad source must never leave a variant missing
             log.warning("thumb variant %s failed (%s) -> plain video keyframe", VARIANT_LETTERS[i], exc)
             _extract_frame(video_path, frame_path)
-            _overlay_text(frame_path, headline, variant_path, kicker, grade=True)
+            _overlay_text(frame_path, headline, variant_path, kicker, grade=True)  # keyframe -> no credit
         finally:
             frame_path.unlink(missing_ok=True)
         paths.append(str(variant_path))
@@ -247,9 +252,54 @@ def _extract_frame(src: Path, out_path: Path) -> None:
         raise RuntimeError(f"ffmpeg frame extract failed for {src.name}: {result.stderr[-500:]}")
 
 
-def _overlay_text(frame_path: Path, text: str, out_path: Path, kicker: str, grade: bool = True) -> None:
+def _overlay_text(frame_path: Path, text: str, out_path: Path, kicker: str,
+                  grade: bool = True, credit: str | None = None) -> None:
     """Cinematic grade (optional) + vignette, then the negative-space poster headline (see
-    thumbnail_style) under the shared brass `kicker`."""
+    thumbnail_style) under the shared brass `kicker`, plus a bottom-right photo credit when the
+    source is a CC BY/BY-SA archival photo."""
     img = thumbnail_style.stylize(Image.open(frame_path), grade=grade)
     thumbnail_style.draw_title(img, text, kicker=kicker)
+    thumbnail_style.draw_credit(img, credit or "")
     img.save(out_path, "JPEG", quality=92)
+
+
+def _event_year(script_path: Path) -> int | None:
+    """The disaster's canonical 4-digit year, emitted by the script generator — a reliable
+    kicker year when the title itself carries none. None when absent/unparseable."""
+    if not script_path.exists():
+        return None
+    try:
+        year = json.loads(script_path.read_text(encoding="utf-8")).get("event_year")
+        return int(year) if year else None
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _archival_credits(video_id: int) -> dict[str, str]:
+    """`{archival photo path -> on-image credit line}` for this video's CC BY/BY-SA stills. The
+    Asset license field is the `short | artist | page` triple written by save_archival."""
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(Asset.url_or_path, Asset.license).where(
+                Asset.video_id == video_id, Asset.kind == "archival"
+            )
+        ).all()
+    credits: dict[str, str] = {}
+    for path, lic in rows:
+        line = _thumb_credit(lic)
+        if line:
+            credits[str(Path(path))] = line
+    return credits
+
+
+def _thumb_credit(license_field: str | None) -> str | None:
+    """An on-image credit for a CC BY / CC BY-SA Commons photo, else None — PD/CC0 need no
+    attribution and stay off the thumbnail to keep it clean."""
+    parts = [p.strip() for p in (license_field or "").split("|")]
+    if len(parts) != 3:
+        return None
+    short, artist, _page = parts
+    if not short.lower().startswith(("cc by", "cc-by")):
+        return None
+    who = artist if artist and artist.lower() != "unknown author" else "Unknown author"
+    return f"Photo: {who} · Wikimedia Commons · {short}"

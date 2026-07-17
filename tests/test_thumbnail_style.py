@@ -70,6 +70,21 @@ def test_accent_targets_red_payoff_rules():
     assert ts._accent_targets(["NEVER EXPLAINED"]) == {(0, 1)}
 
 
+def test_compose_kicker_uses_event_year_when_title_has_none():
+    assert ts.compose_kicker("MS Estonia", "MS Estonia: Sealed for 26 Years", event_year=1994) == "MS ESTONIA · 1994"
+    assert ts.compose_kicker("RMS Lusitania", "Manifest, 1915", event_year=1900) == "RMS LUSITANIA · 1915"  # title year wins
+    assert ts.compose_kicker("SS Eastland", "The Eastland Disaster") == "SS EASTLAND"  # no year anywhere
+
+
+def test_draw_credit_runs_and_is_noop_when_empty():
+    img = Image.new("RGB", SIZE, (30, 30, 30))
+    snapshot = list(img.getdata())
+    ts.draw_credit(img, "   ")
+    assert list(img.getdata()) == snapshot  # empty -> no-op
+    ts.draw_credit(img, "Photo: X · Wikimedia Commons · CC BY-SA 4.0")
+    assert list(img.getdata()) != snapshot and img.size == SIZE
+
+
 def test_compose_kicker_prefers_anchor_and_finds_year():
     assert ts.compose_kicker("RMS Lusitania", "Butter — Lusitania's Manifest, 1915") == "RMS LUSITANIA · 1915"
     assert ts.compose_kicker("MS Estonia", "MS Estonia: Why the Wreck Was Sealed") == "MS ESTONIA"  # no year

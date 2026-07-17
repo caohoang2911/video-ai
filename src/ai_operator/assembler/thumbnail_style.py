@@ -21,6 +21,7 @@ KICKER_COLOR = (206, 168, 98)   # brass — SUBJECT·YEAR eyebrow above the head
 BASE_COLOR = (247, 247, 247)    # headline words, off-white for contrast against the red
 ACCENT_COLOR = (214, 34, 34)    # the red payoff — a numeric line, else the last line/word
 STROKE_COLOR = (0, 0, 0)
+CREDIT_COLOR = (208, 208, 208)  # muted grey for the bottom-right photo-attribution line
 MAX_LINES = 4
 _MAX_FONT, _MIN_FONT = 156, 44
 _KICKER_TRACKING = 0.16  # letter-spacing as a fraction of the kicker font size
@@ -109,10 +110,27 @@ def draw_title(
     return img
 
 
-def compose_kicker(subject: str | None, title: str | None) -> str:
+def draw_credit(img: Image.Image, text: str) -> Image.Image:
+    """Small photo-attribution line in the bottom-right corner (CC BY / BY-SA archival needs a
+    visible credit). Grey with a black stroke so it stays legible but recedes. No-op if empty."""
+    text = (text or "").strip()
+    if not text:
+        return img
+    w, h = img.size
+    font = _load_font(max(15, w // 68))  # ~19px at 1280 wide
+    tw = _text_w(text, font)
+    x = max(int(w * 0.012), w - tw - int(w * 0.012))
+    y = h - font.size - int(h * 0.028)
+    ImageDraw.Draw(img).text((x, y), text, font=font, fill=CREDIT_COLOR,
+                             stroke_width=2, stroke_fill=STROKE_COLOR)
+    return img
+
+
+def compose_kicker(subject: str | None, title: str | None, event_year: int | None = None) -> str:
     """`SUBJECT · YEAR` eyebrow. Prefers the clean entity `subject` (the archive anchor, e.g.
     "RMS Lusitania") over parsing the raw title, so a hook-phrase title never becomes a
-    rambling kicker; the year is the first found in the title or subject. Degrades cleanly to
+    rambling kicker. The year is the first 4-digit year in the title/subject, else the script's
+    canonical `event_year` (a title like "...Sealed for 26 Years" carries no year). Degrades to
     subject-only, or a title split when no subject is given, or '' when both are absent."""
     entity = (subject or "").strip()
     if not entity and title:  # no anchor -> fall back to the title's pre-colon/dash segment
@@ -120,8 +138,9 @@ def compose_kicker(subject: str | None, title: str | None) -> str:
     entity = entity.upper().rstrip(".,!?…:;")
     if not entity:
         return ""
-    year = _YEAR_RE.search(f"{title or ''} {subject or ''}")
-    return f"{entity} · {year.group(0)}" if year else entity
+    match = _YEAR_RE.search(f"{title or ''} {subject or ''}")
+    year = match.group(0) if match else (str(event_year) if event_year else "")
+    return f"{entity} · {year}" if year else entity
 
 
 def fallback_headline(title: str | None, subject: str | None) -> str:

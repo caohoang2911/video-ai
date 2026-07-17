@@ -138,6 +138,32 @@ def test_hero_prompt_anchors_on_subject():
 
 
 # --------------------------------------------------------------------------------------
+# photo credit (CC BY only) + event_year
+# --------------------------------------------------------------------------------------
+
+
+def test_thumb_credit_only_for_cc_by_licenses():
+    assert tg._thumb_credit("CC BY-SA 4.0 | Mark Markefelt | http://p") == \
+        "Photo: Mark Markefelt · Wikimedia Commons · CC BY-SA 4.0"
+    assert tg._thumb_credit("CC BY 2.0 | Bob | http://p").startswith("Photo: Bob")
+    assert tg._thumb_credit("CC BY-SA 4.0 | unknown author | http://p").startswith("Photo: Unknown author")
+    assert tg._thumb_credit("Public domain | someone | http://p") is None   # PD -> no burn
+    assert tg._thumb_credit(None) is None
+    assert tg._thumb_credit("only one part") is None
+
+
+def test_event_year_reads_script_json(tmp_path):
+    import json
+
+    p = tmp_path / "script.json"
+    p.write_text(json.dumps({"event_year": 1994}))
+    assert tg._event_year(p) == 1994
+    p.write_text(json.dumps({"event_year": None}))
+    assert tg._event_year(p) is None
+    assert tg._event_year(tmp_path / "missing.json") is None
+
+
+# --------------------------------------------------------------------------------------
 # generate() wiring: an already-graded hero must NOT be PIL-graded again
 # --------------------------------------------------------------------------------------
 
@@ -180,10 +206,11 @@ def test_generate_kontext_hero_is_not_double_graded(monkeypatch, tmp_path):
     monkeypatch.setattr(tg, "_overlay_texts", lambda p: ["NEVER EXPLAINED", "55 MINUTES", "ONE BOLT"])
     monkeypatch.setattr(tg, "_gated_pools", lambda vid: ([tmp_path / "a.jpg"], [], "MS Estonia"))
     monkeypatch.setattr(tg, "_pick_hero", lambda v, a, vid: (tmp_path / "a.jpg", "archival", None))
+    monkeypatch.setattr(tg, "_archival_credits", lambda vid: {})  # skip the DB credit lookup
     monkeypatch.setattr(tg, "_prepare_hero", lambda fp, mode, vid: True)  # hero already graded
     monkeypatch.setattr(tg, "_extract_frame", lambda src, out: Path(out).write_bytes(b"f"))
 
-    def _spy(frame_path, text, out_path, kicker, grade=True):
+    def _spy(frame_path, text, out_path, kicker, grade=True, credit=None):
         grades[Path(out_path).name] = grade
         Path(out_path).write_bytes(b"o")
 
