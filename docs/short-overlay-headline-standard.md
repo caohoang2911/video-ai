@@ -5,12 +5,17 @@ backed by deep research (2026-07-18). Plan: `plans/260718-0341-short-overlay-whi
 
 ## The standard — "White-set / Red-gap Headline"
 
-A curiosity-gap HEADLINE, **7-14 words on two lines** (split by `\n`), pinned in the top blur band:
+A curiosity-gap HEADLINE, **7-12 words on two lines** (split by `\n`), pinned in the top blur band.
+**Each line is a PUNCHY FRAGMENT (≤6 words / ~26 chars), not a full sentence** — a long clause
+overflows the frame.
 
-- **Line 1 — setup** (off-white `#F7F7F7`): subject + action, entity-anchored enough to feel specific.
+- **Line 1 — setup** (off-white `#F7F7F7`): subject/action, entity-anchored enough to feel specific.
 - **Line 2 — gap** (red `#D62222`): raises the stake/scale/number but **withholds the payoff** (the how/why the full video answers).
 
-Example: `How the General Slocum Caught Fire` / `1,021 Never Came Home`.
+Example: `The Man Who Drowned Los Angeles` / `400 Dead, He Envied Them`.
+
+**Render guarantees no overflow:** each line is width-wrapped to the frame; a too-long headline
+degrades to a 3rd line (or smaller font) rather than bleeding off-screen. Short headlines stay 2 lines.
 
 **Red rule:** the red line is the one bearing the first number; if no number, the last line.
 Exactly one red line — emphasis works by scarcity.
@@ -22,8 +27,11 @@ Exactly one red line — emphasis works by scarcity.
 
 - **Inverted-U concreteness** (primary: *When curiosity gaps backfire*, Nature Sci Rep 2025):
   over-stacking entity+year+numbers **closes the gap and lowers CTR** — stay MIDDLING.
-- History niche retains on **7-14-word, 2-3-line** headlines; terse-fragment-only and
-  payoff-first ordering were both empirically refuted.
+- History niche retains on short **7-12-word, 2-line** headlines; terse-fragment-only and
+  payoff-first ordering were both empirically refuted. (Research range was 7-14; the prompt now
+  targets the tighter 7-12 punchy-fragment band because the top end read as a full sentence and
+  needed 3 lines. The schema keeps a lenient 7-14 backstop; the renderer guarantees no overflow
+  regardless, so length is a quality preference, not a hard render constraint.)
 - Overlay and metadata `title` are **partners, not twins**: the title carries the searchable
   entity (where search finds the short), the overlay carries the want-to-know. Mirror keywords,
   never verbatim-identical (duplicate copy cannibalizes search).

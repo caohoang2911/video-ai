@@ -73,17 +73,38 @@ def red_line_indices(lines: list[str]) -> set[int]:
     return {len(lines) - 1} if lines else set()
 
 
-def fit_fontsize(lines: list[str], max_w: int, font_file: str) -> int:
-    """Largest size at which EVERY line fits `max_w` px (measured with the real TTF).
-    Fit against pixel width per line, not char count — a condensed face makes the
-    most-characters line not always the widest, so a char heuristic can still clip."""
-    if not lines:
-        return _MIN_FONT
-    for size in range(_MAX_FONT, _MIN_FONT - 1, -4):
-        font = ImageFont.truetype(font_file, size)
-        if all(font.getlength(ln) <= max_w for ln in lines):
-            return size
-    return _MIN_FONT
+def _wrap_words(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
+    """Greedy word-wrap to `max_w` px so no line ever overflows the frame; a single word
+    wider than the box still gets its own line (only clips in the degenerate huge-word case)."""
+    lines: list[str] = []
+    cur = ""
+    for word in text.split():
+        trial = f"{cur} {word}".strip()
+        if not cur or font.getlength(trial) <= max_w:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def layout(parts: list[str], max_w: int, font_file: str) -> tuple[int, list[str]]:
+    """Largest font at which the headline fits the frame width. Honors the setup/gap `parts`
+    as preferred breaks but RE-WRAPS any part too wide for `max_w`, so the text can never
+    overflow. Prefers 2 total lines; falls back to 3 when the content is too long for 2 at a
+    readable size (a 3rd line degrades gracefully — overflow never does)."""
+    if not parts:
+        return _MIN_FONT, []
+    for target in (2, 3):
+        for size in range(_MAX_FONT, _MIN_FONT - 1, -4):
+            font = ImageFont.truetype(font_file, size)
+            lines = [wl for p in parts for wl in _wrap_words(p, font, max_w)]
+            if len(lines) <= target:
+                return size, lines
+    font = ImageFont.truetype(font_file, _MIN_FONT)  # floor: width-safe even if it needs >3 lines
+    return _MIN_FONT, [wl for p in parts for wl in _wrap_words(p, font, max_w)]
 
 
 def build_headline_fx(
@@ -104,9 +125,8 @@ def build_headline_fx(
     if case == "upper":
         text = text.upper()
 
-    lines = split_lines(text)
     font_file = _display_font()
-    size = fit_fontsize(lines, width - 2 * _SIDE_MARGIN, font_file)
+    size, lines = layout(split_lines(text), width - 2 * _SIDE_MARGIN, font_file)
     reds = red_line_indices(lines)
     line_h = int(size * 1.14)
     border = max(4, size // 13)

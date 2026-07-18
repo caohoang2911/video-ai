@@ -58,17 +58,29 @@ def test_red_empty_is_safe():
     assert ht.red_line_indices([]) == set()
 
 
-# --- fit_fontsize ----------------------------------------------------------------
-def test_fit_fontsize_within_bounds_and_shrinks_for_long_lines():
-    font = ht._display_font()
-    short = ht.fit_fontsize(["War"], 900, font)
-    long = ht.fit_fontsize(["An Extremely Long Uninterrupted Single Display Line Here"], 900, font)
-    assert ht._MIN_FONT <= long <= short <= ht._MAX_FONT
-    assert long < short  # more text on a line -> smaller font to fit the same width
+# --- layout (wrap + fit, guarantees no overflow) ---------------------------------
+def test_layout_never_overflows_even_on_a_long_line():
+    from PIL import ImageFont
+    ff = ht._display_font()
+    max_w = 1080 - 2 * ht._SIDE_MARGIN
+    # the real overflow bug: a 9-word setup that bled off both frame edges at the font floor
+    parts = ht.split_lines("The engineer who built LA's water told the inquest\nhe envied the 400 dead")
+    size, lines = ht.layout(parts, max_w, ff)
+    assert lines and all(ImageFont.truetype(ff, size).getlength(l) <= max_w for l in lines)
+    assert len(lines) <= 3  # long content degrades to a 3rd line, never overflow
 
 
-def test_fit_fontsize_empty_is_safe():
-    assert ht.fit_fontsize([], 900, ht._display_font()) == ht._MIN_FONT
+def test_layout_keeps_a_short_headline_two_lines():
+    ff = ht._display_font()
+    size, lines = ht.layout(
+        ht.split_lines("How Germany Conquered\nHalf of Europe in Just 2 Years"),
+        1080 - 2 * ht._SIDE_MARGIN, ff,
+    )
+    assert len(lines) == 2
+
+
+def test_layout_empty_is_safe():
+    assert ht.layout([], 900, ht._display_font()) == (ht._MIN_FONT, [])
 
 
 # --- build_headline_fx -----------------------------------------------------------

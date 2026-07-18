@@ -63,13 +63,16 @@ Rules for EVERY short (the curiosity-gap contract):
    phrase FIRST and the entity/year anchor after a dash: "The Life Vests That Crumbled
    to Dust — General Slocum, 1904". Never start two shorts with the same entity prefix.
 8. `overlay_headline`: the on-screen top-band hook — Shorts autoplay muted, so this line does
-   the hook's WHOLE job. A curiosity-gap HEADLINE of 7-14 words on TWO lines split by a single
-   '\n': line 1 = setup (subject + action, entity-anchored enough to feel specific); line 2 =
-   the GAP that raises the stake/scale/number but WITHHOLDS the payoff (the how/why the full
-   video answers). Stay MIDDLING — do NOT over-stack specifics (piling death-toll + year +
-   extra numbers closes the gap and loses clicks). It must DIFFER from `title` (partners, not
-   twins): the title carries the searchable entity, the overlay carries the want-to-know.
-   e.g. "How the General Slocum Caught Fire\n1,021 Never Came Home".
+   the hook's WHOLE job. A curiosity-gap HEADLINE of 7-12 words on TWO lines split by a single
+   '\n'. EACH line must be a PUNCHY FRAGMENT of <=6 words / ~26 characters — NOT a full
+   sentence (a long clause overflows the frame and is unreadable). line 1 = setup (subject or
+   action, entity-anchored enough to feel specific); line 2 = the GAP that raises the
+   stake/number but WITHHOLDS the payoff (the how/why the full video answers). Stay MIDDLING —
+   do NOT over-stack specifics. It must DIFFER from `title` (partners, not twins): the title
+   carries the searchable entity, the overlay the want-to-know.
+   GOOD: "The Man Who Drowned Los Angeles\n400 Dead, He Envied Them".
+   BAD (full sentence, too long, overflows): "The engineer who built LA's water told the
+   inquest\nhe envied the 400 dead".
 9. `beats`: 5-6 visual beats (a new image every 5-7 seconds keeps swipe-away at bay);
    keywords should match the source shot list's imagery so existing visuals can be reused.
    LOOP ENDING: the LAST beat's keywords echo the FIRST beat's imagery (same keyword

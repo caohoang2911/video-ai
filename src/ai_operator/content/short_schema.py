@@ -69,8 +69,10 @@ class ShortScript(BaseModel):
     @field_validator("overlay_headline")
     @classmethod
     def _headline_word_count(cls, v: str) -> str:
-        # 7-14 words is the history-niche sweet spot (a terse fragment under-hooks, a longer
-        # line goes unread at phone size); newline is the setup/gap break, not a word.
+        # 7-14 is a LENIENT backstop (drops only egregious LLM output). The prompt targets the
+        # tighter 7-12 punchy-fragment sweet spot, and the renderer wraps any length without
+        # overflow — so this stays wide enough not to retroactively reject already-persisted
+        # shorts on re-validation. Newline is the setup/gap break, not a word.
         v = v.strip()
         if v:
             n = len(v.replace("\n", " ").split())
