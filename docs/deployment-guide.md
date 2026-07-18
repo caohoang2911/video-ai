@@ -7,8 +7,8 @@ always-on** (no cloud infra at P0). A container path is included for a future mo
 
 - Setup complete per `README.md` (venv installed, `.env` filled, `init-db` run).
 - **Install ALL base dependencies** — `pip install -e .` in the venv. Several base deps are
-  heavy and lazy-imported (`sentence-transformers` for topic dedup, `torch`/`transformers` for
-  CLIP relevance), so a partial/drifted venv looks fine until a job that needs one fails deep
+  heavy and lazy-imported (`sentence-transformers` for topic dedup, Gemini vision for thumbnail
+  relevance scoring), so a partial/drifted venv looks fine until a job that needs one fails deep
   inside (e.g. `gen-topics` → `No module named 'sentence_transformers'`). `run-web` and
   `run-scheduler` log a loud warning at boot listing any missing critical dep — if you see it,
   re-run `pip install -e .`.

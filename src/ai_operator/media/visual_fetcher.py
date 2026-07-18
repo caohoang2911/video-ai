@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+import re
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -162,6 +163,25 @@ def _rank_candidates(text: str, candidates: list[dict]) -> list[dict]:
         return ranked
 
 
+# Event/topic titles lead with the entity and trail with an angle or hook after a delimiter:
+# a colon or pipe ("The Halifax Explosion: A City Erased"), or a spaced dash
+# ("Pan Am Flight 103 - Lockerbie"). A spaced dash only — so a hyphenated name like
+# "Marie-Antoinette" is never split.
+_ENTITY_DELIMITERS = re.compile(r"\s*[:|]\s*|\s+[—–-]{1,2}\s+")
+
+
+def extract_entity(title: str) -> str:
+    """The leading event/subject entity of a title, used to anchor BOTH archive search and the
+    thumbnail relevance judgement. Splits on the FIRST delimiter (colon / pipe / spaced dash)
+    and takes the segment before it; returns the whole trimmed title when there is no
+    delimiter (better than the old ':'-only split, which returned the entire noisy line for a
+    dash- or delimiter-free title)."""
+    title = (title or "").strip()
+    if not title:
+        return ""
+    return _ENTITY_DELIMITERS.split(title, maxsplit=1)[0].strip()
+
+
 def _archival_anchor(video_id: int) -> str:
     """Entity phrase anchoring Commons searches. Beat keywords describe VISUALS ("stopped
     clock", "burning ship") -- useless as archive queries; the archive is organized around
@@ -184,7 +204,7 @@ def _archival_anchor(video_id: int) -> str:
     except Exception as exc:  # noqa: BLE001 - anchor là gia vị, thiếu nó tier vẫn chạy bằng keywords
         log.warning("archival anchor lookup failed for video %s: %s", video_id, exc)
         return ""
-    return title.split(":")[0].strip()
+    return extract_entity(title)
 
 
 def _fetch_archival(

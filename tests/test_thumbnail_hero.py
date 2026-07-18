@@ -11,8 +11,9 @@ from ai_operator.assembler import thumbnail_generator as tg
 
 
 class _Video:
-    def __init__(self, title):
+    def __init__(self, title, vid=0):
         self.title = title
+        self.id = vid  # _hero_prompt reads OUTPUT_DIR/<id>/script.json; 0 has no file -> year None
 
 
 # --------------------------------------------------------------------------------------
@@ -21,31 +22,33 @@ class _Video:
 
 
 def test_gate_noop_when_clip_unavailable(monkeypatch):
-    monkeypatch.setattr(tg.clip_reranker, "available", lambda: False)
+    monkeypatch.setattr(tg.relevance_scorer, "available", lambda: False)
     paths = [Path("a.jpg"), Path("b.jpg")]
-    assert tg._relevance_gate(paths, "estonia", 1) == paths  # untouched
+    # gate now pairs each kept path with its score; no backend -> all pass with score None
+    assert tg._relevance_gate(paths, "estonia", 1) == [(p, None) for p in paths]
 
 
 def test_gate_noop_when_subject_empty(monkeypatch):
-    monkeypatch.setattr(tg.clip_reranker, "available", lambda: True)
+    monkeypatch.setattr(tg.relevance_scorer, "available", lambda: True)
     paths = [Path("a.jpg")]
-    assert tg._relevance_gate(paths, "", 1) == paths
+    assert tg._relevance_gate(paths, "", 1) == [(Path("a.jpg"), None)]
 
 
 def test_gate_filters_below_threshold(monkeypatch):
-    monkeypatch.setattr(tg.clip_reranker, "available", lambda: True)
+    monkeypatch.setattr(tg.relevance_scorer, "available", lambda: True)
     monkeypatch.setattr(tg.settings, "THUMB_RELEVANCE_MIN", 0.22)
     scores = {"good.jpg": 0.31, "wrong.jpg": 0.10}
-    monkeypatch.setattr(tg.clip_reranker, "score", lambda subj, p: scores[p.name])
+    monkeypatch.setattr(tg.relevance_scorer, "score", lambda subject, p, video_id=None: scores[p.name])
     kept = tg._relevance_gate([Path("good.jpg"), Path("wrong.jpg")], "estonia ferry", 1)
-    assert kept == [Path("good.jpg")]  # wrong-subject archive dropped
+    assert kept == [(Path("good.jpg"), 0.31)]  # wrong-subject archive dropped, score rides along
 
 
 def test_gate_keeps_on_none_score(monkeypatch):
-    monkeypatch.setattr(tg.clip_reranker, "available", lambda: True)
-    monkeypatch.setattr(tg.clip_reranker, "score", lambda subj, p: None)  # measure failed
+    monkeypatch.setattr(tg.relevance_scorer, "available", lambda: True)
+    monkeypatch.setattr(tg.relevance_scorer, "score", lambda subject, p, video_id=None: None)  # measure failed
     paths = [Path("a.jpg"), Path("b.jpg")]
-    assert tg._relevance_gate(paths, "estonia", 1) == paths  # never punish on a failed measure
+    # never punish on a failed measure: both kept, paired with a None score
+    assert tg._relevance_gate(paths, "estonia", 1) == [(p, None) for p in paths]
 
 
 # --------------------------------------------------------------------------------------

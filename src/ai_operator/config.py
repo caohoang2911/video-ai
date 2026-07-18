@@ -66,12 +66,14 @@ class Settings(BaseSettings):
     # OFF without removing their API keys — e.g. a provider keeps returning content-mismatched
     # hits for the channel's niche.
     DISABLED_VISUAL_SOURCES: str = ""
-    # Thumbnail hero: minimum CLIP cosine relevance (subject vs image) an archival photo must
+    # Thumbnail hero: minimum event-relevance (subject vs image, 0..1) an archival photo must
     # clear to face the video — blocks good-looking but wrong-subject archives (e.g. the wrong
-    # ship's livery). Below it the hero falls back to a synthetic FLUX drama frame. CLIP cosine
-    # for a relevant photo lands ~0.20-0.30; raise to be stricter. Gate is skipped if CLIP is
-    # unavailable (no torch/model) so render never blocks on it.
-    THUMB_RELEVANCE_MIN: float = 0.22
+    # ship's livery). Below it the hero falls back to a synthetic FLUX drama frame. Scored by
+    # Gemini vision (1.0 = depicts exactly this event, 0.0 = unrelated); ~0.5 keeps clear
+    # matches and drops mismatches — raise to be stricter. When no relevance backend is
+    # configured the gate can't judge and passes images through, but raises a loud operator
+    # alert so the disabled check is never silent.
+    THUMB_RELEVANCE_MIN: float = 0.5
     # Enhance the primary thumbnail hero (real archival) through FLUX Kontext — subject-
     # preserving relight+grade, ~$0.04/video. Off => PIL grade only (no fal call).
     THUMBNAIL_KONTEXT_ENHANCE: bool = True

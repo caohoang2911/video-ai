@@ -39,8 +39,9 @@
       primary image generator: ~$0.025/image, commercial output license via fal, ~$0.30/video / ~$4/month.
       Set `IMAGE_GEN_BACKEND=sdxl` for a free, fully-offline render using local SDXL first)_. The same key
       powers the **thumbnail hero** (FLUX Kontext relight of the primary archival photo, ~$0.04/video —
-      toggle off with `THUMBNAIL_KONTEXT_ENHANCE=false`; `THUMB_RELEVANCE_MIN` gates which archival photos
-      may face the video before a synthetic drama frame stands in).
+      toggle off with `THUMBNAIL_KONTEXT_ENHANCE=false`). `THUMB_RELEVANCE_MIN` (default 0.5, Gemini vision
+      score 0..1) gates archival photo relevance; Gemini must confirm the image depicts the event subject,
+      else the gate raises an ops alert and falls back to synthetic hero. Requires `GEMINI_API_KEY`.
 - [ ] **TELEGRAM_BOT_TOKEN** (from @BotFather `/newbot`) + **TELEGRAM_CHAT_ID** (run `operator get-chat-id`).
 
 ## Budget / infra

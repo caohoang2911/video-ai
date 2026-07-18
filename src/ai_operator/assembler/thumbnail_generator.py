@@ -6,7 +6,7 @@ overlay line written to pair with that specific title (script.json carries 3 tit
 so the A/B title test and thumbnail test line up variant-for-variant.
 
 The HERO (variant a — the primary thumb_path) is chosen for authenticity AND relevance: a
-real archival photo that clears the CLIP relevance gate, enhanced with a subject-preserving
+real archival photo that clears the event-relevance gate, enhanced with a subject-preserving
 FLUX Kontext relight; when no archival is both relevant and available, a synthetic FLUX drama
 frame stands in. Variants b/c stay real frames with a PIL cinematic grade — cheaper, and a
 more varied A/B set. Every fal step degrades to a PIL grade so a thumbnail is never missing.
@@ -15,7 +15,6 @@ more varied A/B set. Every fal step degrades to a PIL grade so a thumbnail is ne
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from pathlib import Path
 
@@ -26,7 +25,7 @@ from ..config import OUTPUT_DIR, settings
 from ..db import SessionLocal
 from ..db.models import Asset, Video
 from ..logging_setup import get_logger
-from ..media import clip_reranker, cloud_flux
+from ..media import cloud_flux, relevance_scorer
 from . import thumbnail_frame_score, thumbnail_style
 
 log = get_logger("assembler.thumbnail")
@@ -34,6 +33,10 @@ log = get_logger("assembler.thumbnail")
 WIDTH, HEIGHT = 1280, 720
 N_VARIANTS = 3
 VARIANT_LETTERS = "abc"
+# Relevances within this band count as a tie, so the aesthetic frame-score breaks it — a
+# punchier frame only wins among near-equally-relevant photos, never over a clearly more
+# relevant one. Keeps score noise from flipping the hero on a 0.01 difference.
+_RELEVANCE_TIE_EPS = 0.05
 _SCALE_FILL = f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT}"
 
 # Preserve-subject Kontext edit: relight/regrade only, never invent or remove objects — keeps
@@ -151,36 +154,88 @@ def _subject_text(video_id: int) -> str:
         return ""
 
 
-def _relevance_gate(paths: list[Path], subject: str, video_id: int) -> list[Path]:
-    """Drop archival photos whose CLIP cosine relevance to `subject` is below the threshold —
-    a good-looking but wrong-subject archive (wrong ship, wrong livery) must not face the
-    video. No-op when CLIP is unavailable or a score can't be taken (best-effort)."""
-    if not paths or not subject or not clip_reranker.available():
-        return paths
-    kept = []
+def _gate_disabled_alert(video_id: int, reason: str) -> None:
+    """One loud operator signal that the relevance gate could not judge this video's hero — the
+    disabled check must never be silent. A missing/expired/quota'd key, an outage, or an
+    underivable subject all land here."""
+    from ..ops.alerting import alert  # lazy: keep ops off this module's import path
+
+    alert(
+        f"thumbnail relevance gating DISABLED ({reason}) — "
+        f"hero for video {video_id} chosen without an event-match check"
+    )
+
+
+def _relevance_gate(
+    paths: list[Path], subject: str, video_id: int, *, expect_scores: bool = True
+) -> list[tuple[Path, float | None]]:
+    """Keep archival photos that depict `subject`, each paired with its event-relevance score —
+    a good-looking but wrong-subject archive (wrong ship, wrong livery) must not face the video.
+    The score rides along so the caller can rank relevance-first (see `_rank_relevance_first`).
+    Best-effort per image: an unscored image (score None) is kept, not punished. The gate FAILS
+    LOUD (an operator alert, never a silent pass) whenever it cannot actually judge: no subject,
+    no backend configured, OR a configured backend that returns no usable score for ANY candidate
+    (an expired/quota'd key or an outage — the likeliest silent-off in practice). `expect_scores`
+    is False for the video-heavy `others` pool, where all-None is normal (clips can't be
+    image-scored) and would false-alarm."""
+    if not paths:
+        return []
+    if not subject:
+        _gate_disabled_alert(video_id, "event subject could not be derived")
+        return [(p, None) for p in paths]
+    if not relevance_scorer.available():
+        _gate_disabled_alert(video_id, "no relevance backend configured")
+        return [(p, None) for p in paths]
+    kept: list[tuple[Path, float | None]] = []
+    scored_any = False
     for p in paths:
-        s = clip_reranker.score(subject, p)
+        s = relevance_scorer.score(subject, p, video_id=video_id)
         if s is None:  # unreadable / model hiccup -> keep, don't punish on a failed measure
-            kept.append(p)
+            kept.append((p, None))
             continue
+        scored_any = True
         log.info("thumb relevance %.3f (min %.2f) subject=%r img=%s",
                  s, settings.THUMB_RELEVANCE_MIN, subject, p.name)
         if s >= settings.THUMB_RELEVANCE_MIN:
-            kept.append(p)
+            kept.append((p, s))
+    if expect_scores and not scored_any:  # backend present but judged nothing -> broken / quota'd
+        _gate_disabled_alert(video_id, "relevance backend returned no usable score")
     return kept
 
 
+def _rank_relevance_first(scored: list[tuple[Path, float | None]]) -> list[Path]:
+    """Order gate-passers by event-relevance first; within a relevance band (`_RELEVANCE_TIE_EPS`)
+    delegate to `thumbnail_frame_score.rank`, which orders by aesthetic punch AND drops
+    near-duplicate frames — so two crops of one photo never take two A/B slots. Unscored images
+    (fail-open) all share one band -> pure frame-score order + dedup, the prior behaviour."""
+    bands: dict[int, list[Path]] = {}
+    for path, rel in scored:
+        band = round(rel / _RELEVANCE_TIE_EPS) if rel is not None else 0
+        bands.setdefault(band, []).append(path)
+    ranked: list[Path] = []
+    for band in sorted(bands, reverse=True):  # highest relevance first
+        ranked.extend(thumbnail_frame_score.rank(bands[band], N_VARIANTS))
+    return ranked[:N_VARIANTS]
+
+
 def _gated_pools(video_id: int) -> tuple[list[Path], list[Path], str]:
-    """`(archival_ranked, others_ranked, subject)`: archival filtered by the relevance gate
-    then frame-score ranked; other visuals frame-score ranked; the subject phrase used."""
+    """`(archival_ranked, others_ranked, subject)`. Archival is relevance-gated then ranked
+    relevance-first (aesthetic tie-break + near-duplicate dedup). `others` (stock/broll/gen)
+    normally only fill secondary A/B variants, so frame-score ranking is enough — BUT when no
+    archival is relevant an `others` frame can fall through to the hero (no-FAL_KEY path), so in
+    that branch it must clear the same relevance gate too: a generic modern clip must not face
+    the video un-judged. Gating `others` only in that branch keeps the extra vision calls off the
+    common path; `expect_scores=False` there because video-broll can't be image-scored."""
     subject = _subject_text(video_id)
     archival, others = _caption_free_sources(video_id)
-    archival = _relevance_gate(archival, subject, video_id)
-    return (
-        thumbnail_frame_score.rank(archival, N_VARIANTS),
-        thumbnail_frame_score.rank(others, N_VARIANTS),
-        subject,
-    )
+    archival_ranked = _rank_relevance_first(_relevance_gate(archival, subject, video_id))
+    if archival_ranked:
+        others_ranked = thumbnail_frame_score.rank(others, N_VARIANTS)
+    else:
+        others_ranked = _rank_relevance_first(
+            _relevance_gate(others, subject, video_id, expect_scores=False)
+        )
+    return archival_ranked, others_ranked, subject
 
 
 def _thumbnail_sources(video_id: int) -> list[Path]:
@@ -232,13 +287,22 @@ def _prepare_hero(frame_path: Path, hero_mode: str | None, video_id: int) -> boo
 
 
 def _hero_prompt(video: Video) -> str:
-    """Cinematic dark synthetic-hero prompt anchored on the video's subject (pre-colon/dash)."""
-    subject = re.split(r":| — | – | -- ", (video.title or "").strip(), maxsplit=1)[0].strip()
-    subject = subject or settings.NICHE
+    """Cinematic dark synthetic-hero prompt anchored on the video's subject (leading entity)
+    plus its canonical year — an entity + era cue so FLUX draws the ACTUAL event period-
+    accurately, not a generic moody frame. Year comes from the script's `event_year` when the
+    title carries none."""
+    from ..media.visual_fetcher import extract_entity  # lazy: avoid import cycle at module load
+
+    # Same anchor the gate judges against (parent-aware for shorts, whose own title is a hook
+    # with the entity after a dash) so the synthetic hero draws the ACTUAL event; fall back to
+    # the title's leading entity when the DB lookup yields nothing (detached/test video, no topic).
+    subject = _subject_text(video.id) or extract_entity(video.title or "") or settings.NICHE
+    year = _event_year(OUTPUT_DIR / str(video.id) / "script.json")
+    era = f", {year}" if year else ""
     return (
-        f"cinematic documentary movie-poster still of {subject}, dramatic low-key lighting, "
-        "moody atmosphere, volumetric haze, deep shadows, teal and amber color grade, "
-        "photorealistic, ultra detailed, no text, no watermark"
+        f"cinematic documentary movie-poster still of {subject}{era}, period-accurate detail, "
+        "dramatic low-key lighting, moody atmosphere, volumetric haze, deep shadows, "
+        "teal and amber color grade, photorealistic, ultra detailed, no text, no watermark"
     )
 
 

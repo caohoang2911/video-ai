@@ -21,6 +21,10 @@ log = get_logger("content.llm_client")
 
 _CHARS_PER_TOKEN = 4  # rough pre-call estimate so budget_guard can reserve before spending
 _GEMINI_FLAT_ESTIMATE_USD = 0.05  # Gemini has no per-token price in constants.py yet
+# A relevance judgment is one small downscaled image + a one-number answer — far cheaper than
+# a script call, and free on the Gemini free tier. Reserve a tiny flat amount so a burst of
+# per-image scores can't drain the cap, then record it as the actual (no usage price exists).
+_GEMINI_VISION_FLAT_ESTIMATE_USD = 0.002
 # Adaptive thinking tokens count against max_tokens (it is the ceiling on thinking + text
 # combined). A tight ceiling lets a long thinking pass consume the whole budget and return
 # a response with NO text block at all, which silently drops the call to the Gemini
@@ -182,6 +186,70 @@ def _complete_gemini(system: str, user: str, *, max_tokens: int, step: str, vide
         # rather than handing an empty string to parse_json (a char-0 crash with no context).
         raise LLMError("Gemini returned no text (blocked or empty response)")
     return text
+
+
+def score_image_relevance(
+    subject: str, image_bytes: bytes, *, mime_type: str = "image/jpeg", video_id: int | None = None
+) -> float | None:
+    """0..1 relevance of an image to `subject` via Gemini vision (1.0 = depicts exactly this
+    event/subject, 0.0 = unrelated), or None when Gemini is unusable or returns no parseable
+    number. Best-effort: never raises. Requires GEMINI_API_KEY.
+
+    Backs the thumbnail relevance gate: a real archival photo of the WRONG ship/livery scores
+    low and gets dropped, so only an image that actually depicts the event faces the video."""
+    if not subject or not image_bytes or not settings.GEMINI_API_KEY:
+        return None
+    try:
+        from google import genai
+        from google.genai import types
+    except Exception:  # noqa: BLE001 - SDK not installed -> treat as no backend, keep image
+        return None
+
+    try:
+        ledger_id = check_and_reserve(
+            _GEMINI_VISION_FLAT_ESTIMATE_USD, step="thumb_relevance", provider="gemini", video_id=video_id
+        )
+    except Exception as exc:  # noqa: BLE001 - budget cap / ledger error -> can't judge, never crash render
+        log.warning("Gemini relevance reserve failed (%s) -> image not judged", exc)
+        return None
+
+    try:
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                (
+                    f'Does this image depict "{subject}"? Answer with a single number from 0.0 to '
+                    "1.0 (1.0 = exactly this event/subject, 0.0 = unrelated). Number only, no words."
+                ),
+            ],
+            config=types.GenerateContentConfig(
+                max_output_tokens=16,
+                # No chain-of-thought needed for a one-number answer; thinking would spend the
+                # tiny output budget and return no text (same trap as the script calls above).
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - outage / bad key / quota -> release the reservation
+        record_actual(ledger_id, 0.0)  # nothing billed on failure (mirrors the other providers)
+        log.warning("Gemini relevance score failed (%s) -> image not judged", exc)
+        return None
+    record_actual(ledger_id, _GEMINI_VISION_FLAT_ESTIMATE_USD)
+    return _parse_unit_score(response.text)
+
+
+def _parse_unit_score(text: str | None) -> float | None:
+    """First number found in `text`, clamped to [0, 1]; None when there is no number."""
+    if not text:
+        return None
+    match = re.search(r"\d*\.?\d+", text)
+    if not match:
+        return None
+    try:
+        return max(0.0, min(1.0, float(match.group())))
+    except ValueError:
+        return None
 
 
 def parse_json(text: str) -> dict:
