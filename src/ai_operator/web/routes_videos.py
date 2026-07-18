@@ -26,17 +26,24 @@ def _media_url(path: str | None) -> str | None:
     """`/media/...` URL for a render artifact under OUTPUT_DIR, else None (path outside the
     read-only output mount can't be previewed). Also None when the file no longer exists —
     the DB pointer can outlive its artifact (e.g. revoice tears down final.mp4 before the
-    re-render lands), and a URL to a missing file renders as a broken player."""
+    re-render lands), and a URL to a missing file renders as a broken player.
+
+    The URL carries an `?v=<mtime>` cache-buster: /media artifacts are browser-cached (they
+    keep default caching, unlike the no-store app), so a re-rendered thumbnail/video at the
+    same path would otherwise show the stale cached copy. Keying the query on the file's
+    mtime keeps a stable (cacheable) URL while the file is unchanged and forces a fresh fetch
+    the instant it is re-rendered."""
     if not path:
         return None
     try:
         resolved = Path(path).resolve()
         rel = resolved.relative_to(OUTPUT_DIR.resolve())
+        mtime = int(resolved.stat().st_mtime)
     except (ValueError, OSError):
         return None
     if not resolved.exists():
         return None
-    return f"/media/{rel.as_posix()}"
+    return f"/media/{rel.as_posix()}?v={mtime}"
 
 
 def _youtube_url(yt_id: str | None) -> str | None:
@@ -96,6 +103,18 @@ def _title_options(script_path: str | None) -> list[str]:
     except (OSError, ValueError):
         return []
     return [o.get("title", "") if isinstance(o, dict) else str(o) for o in opts if o]
+
+
+def _transcript(script_path: str | None) -> str:
+    """The video's spoken narration from script.json — the plain-text transcript the operator
+    copies to paste into YouTube's subtitle auto-sync or the description. '' on any read miss
+    (a missing transcript hides the copy button, never 500s the page)."""
+    if not script_path or not Path(script_path).exists():
+        return ""
+    try:
+        return json.loads(Path(script_path).read_text(encoding="utf-8")).get("narration") or ""
+    except (OSError, ValueError):
+        return ""
 
 
 def _ab_kit(v: Video, upload_row: dict | None) -> dict | None:
@@ -206,6 +225,14 @@ def video_detail(request: Request, video_id: int):
             "command": last_job.command, "status": last_job.status, "error": last_job.error,
             "finished_at": iso(last_job.finished_at),
         }
+        # Live poll only while a background job is actually moving this video (pending/running).
+        # A settled video (rendered/published/…) never changes on its own, so the page stays
+        # static instead of re-fetching the whole heavy detail view every few seconds.
+        is_live = s.scalar(
+            select(Job.id)
+            .where(Job.video_id == video_id, Job.status.in_(("pending", "running")))
+            .limit(1)
+        ) is not None
         upload = s.scalar(select(Upload).where(Upload.video_id == video_id).order_by(Upload.id.desc()))
         upload_row = None if upload is None else {
             "youtube_video_id": upload.youtube_video_id, "status": upload.status,
@@ -223,10 +250,12 @@ def video_detail(request: Request, video_id: int):
     return render(request, "video_detail.html", {
         "video": detail, "assets": assets, "costs": costs,
         "decisions": decisions, "upload": upload_row, "allowed_decisions": allowed,
+        "transcript": _transcript(v.script_path),  # spoken narration for the copy-subtitles button
         "shorts": shorts,  # children of a main; empty for a short
         "ab_kit": _ab_kit(v, upload_row),  # Studio A/B copy-paste kit; None for shorts/unpublished
         "retention": retention_panel(video_id, detail.get("duration_sec")),  # None if never uploaded
         "last_step": checkpoint.last_step(video_id),  # live pipeline position while rendering
         "last_job": last_job_row,  # most recent queue command for this video (shows failures)
+        "is_live": is_live,  # gate the 3s auto-refresh: only poll while a job is in flight
         "citations": _load_citations(v.script_path),  # fact-check evidence panel
     })

@@ -60,6 +60,22 @@ def test_missing_video_is_404(client):
     assert client.get("/api/videos/424242").status_code == 404
 
 
+def test_video_detail_has_copy_subtitles_button(client, tmp_path):
+    import json as _json
+    script = tmp_path / "script.json"
+    script.write_text(_json.dumps({"narration": "This is the spoken transcript to copy."}))
+    vid = _seed_video(idempotency_key="t1", state=VideoState.RENDERED.value,
+                      title="X", script_path=str(script))
+    html = client.get(f"/videos/{vid}").text
+    assert "Copy phụ đề" in html
+    assert "This is the spoken transcript to copy." in html  # narration rides in data-t
+
+
+def test_video_detail_hides_button_without_transcript(client):
+    vid = _seed_video(idempotency_key="t0", state=VideoState.DRAFT.value, title="Y")
+    assert "Copy phụ đề" not in client.get(f"/videos/{vid}").text  # no script.json -> no button
+
+
 def test_shorts_list_has_per_short_rerender_button(client):
     # A main's shorts table offers a per-short re-render (gen-visuals) button — but only for
     # re-rollable states (voiced/rendered); a short past review shows no button.

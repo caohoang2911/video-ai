@@ -28,6 +28,17 @@
   {% endif %}
 </div>
 
+{% if transcript %}
+{# copy the spoken narration (plain transcript) — paste into YouTube subtitle auto-sync #}
+<p class="small">
+  <button type="button" class="copy-btn" data-t="{{ transcript }}"
+          onclick="navigator.clipboard.writeText(this.dataset.t);this.textContent='✓ đã copy phụ đề'">
+    📋 Copy phụ đề
+  </button>
+  <span class="muted">transcript {{ transcript.split() | length }} từ</span>
+</p>
+{% endif %}
+
 <div class="detail-layout">
   {# ------- cột trái: nội dung ------- #}
   <div class="detail-main">
