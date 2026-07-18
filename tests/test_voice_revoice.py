@@ -607,3 +607,67 @@ def test_check_char_quota_prefers_live_subscription_over_ledger(tmp_path, monkey
     assert (status.chars_used, status.quota) == (32_272, 40_000)
     assert status.exhausted is False
     assert status.alert is True  # 80.7% >= ngưỡng 70%
+
+
+def test_synthesize_outro_skips_empty_or_blank_text():
+    # No text -> no synth, no side effects (returns None before any DB/provider call).
+    assert tn.synthesize_outro(1, "") is None
+    assert tn.synthesize_outro(1, "   ") is None
+    assert tn.synthesize_outro(1, None) is None
+
+
+def test_synthesize_outro_uses_brand_voice_and_degrades_gracefully(tmp_path, monkeypatch):
+    """Spoken outro rides the ElevenLabs brand voice; when the voice is unavailable or the
+    monthly char quota is spent it returns None (card falls back to music/silence) and never
+    leaves a half-written file or a checkpoint behind. edge-tts is never a substitute here --
+    a draft voice would make the outro a different speaker than the body."""
+    monkeypatch.setattr(tn, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(tn.checkpoint, "is_done", lambda *a, **k: False)
+    writes: list = []
+    monkeypatch.setattr(tn.checkpoint, "write", lambda *a, **k: writes.append(a))
+
+    class _Quota:
+        exhausted, chars_used, quota = False, 0, 40_000
+
+    monkeypatch.setattr(tn.char_guard, "check_char_quota", lambda *a, **k: _Quota())
+
+    # success: brand voice writes the mp3 -> path returned, file on disk, checkpoint written
+    def _ok(text, out_path, **kw):
+        Path(out_path).write_bytes(b"OUTROVOICE")
+        return "rid-1"
+
+    monkeypatch.setattr(tn, "synthesize_elevenlabs", _ok)
+    path = tn.synthesize_outro(7, "One story closes. Another waits. It's on screen now.")
+    assert path is not None and path.exists() and path.name == "outro_voice.mp3"
+    assert writes, "checkpoint must record the outro voice on success"
+
+    # unavailable brand voice: no edge-tts swap -> None, and no stale file left behind
+    monkeypatch.setattr(
+        tn, "synthesize_elevenlabs",
+        lambda *a, **k: (_ for _ in ()).throw(tp.ProviderUnavailable("no key")),
+    )
+    assert tn.synthesize_outro(8, "seal then crack") is None
+    assert not tn.outro_voice_path(8).exists()
+
+    # spent monthly quota: skip before calling the provider at all -> None
+    class _Spent:
+        exhausted, chars_used, quota = True, 40_000, 40_000
+
+    monkeypatch.setattr(tn.char_guard, "check_char_quota", lambda *a, **k: _Spent())
+    called = {"n": 0}
+    monkeypatch.setattr(tn, "synthesize_elevenlabs", lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    assert tn.synthesize_outro(9, "seal then crack") is None
+    assert called["n"] == 0
+
+    # a synth that "succeeds" but writes an empty file -> treated as failure (no checkpoint, None)
+    monkeypatch.setattr(tn.char_guard, "check_char_quota", lambda *a, **k: _Quota())
+    monkeypatch.setattr(tn, "synthesize_elevenlabs", lambda text, out_path, **kw: Path(out_path).write_bytes(b""))
+    assert tn.synthesize_outro(11, "seal then crack") is None
+    assert not tn.outro_voice_path(11).exists()
+
+    # an unexpected error (e.g. quota DB/network) must NOT propagate — best-effort returns None
+    def _boom(*a, **k):
+        raise RuntimeError("quota backend down")
+
+    monkeypatch.setattr(tn.char_guard, "check_char_quota", _boom)
+    assert tn.synthesize_outro(12, "seal then crack") is None

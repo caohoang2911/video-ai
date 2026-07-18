@@ -19,19 +19,31 @@ from .. import checkpoint
 from ..config import OUTPUT_DIR
 from ..db.engine import SessionLocal
 from ..db.models import Video
+from ..cost import elevenlabs_char_guard as char_guard
+from ..cost.budget_guard import BudgetExceeded
 from ..logging_setup import get_logger
 from .tts_chunker import chunk_narration
-from .tts_providers import synthesize_video
+from .tts_providers import (
+    ProviderFailed,
+    ProviderUnavailable,
+    synthesize_elevenlabs,
+    synthesize_video,
+)
 
 log = get_logger("tts_narrator")
 
 STEP = "tts_narration"                # complete-narration checkpoint (narration_path + provider)
 CHUNKS_STEP = "tts_narration_chunks"  # internal per-chunk resume progress; superseded by STEP on success
+OUTRO_STEP = "tts_outro"              # short spoken end-screen outro voice (separate synth)
 CROSSFADE_SEC = 0.35  # short crossfade hides the repeated-tail overlap seam between chunks
 
 
 def narration_path(video_id: int) -> Path:
     return OUTPUT_DIR / str(video_id) / "narration.mp3"
+
+
+def outro_voice_path(video_id: int) -> Path:
+    return OUTPUT_DIR / str(video_id) / "outro_voice.mp3"
 
 
 def _chunk_dir(video_id: int) -> Path:
@@ -91,6 +103,60 @@ def synthesize(video_id: int, narration_text: str) -> Path:
     if provider != "elevenlabs":
         _mark_needs_revoice(video_id)
     log.info("video %s: narration.mp3 written via provider=%s", video_id, provider)
+    return out_path
+
+
+def synthesize_outro(video_id: int, outro_text: str | None) -> Path | None:
+    """Synthesize the short spoken outro (the seal->crack end-screen handoff) as its OWN mp3,
+    on the SAME ElevenLabs brand voice as the narration. Returns the mp3 path, or None when
+    there is no text, the brand voice is unavailable, or the monthly char quota is spent -- the
+    outro card then plays music/silence (its pre-spoken behaviour). Never raises: the spoken
+    outro is an enhancement and must never block voicing or the render.
+
+    edge-tts is deliberately NOT a fallback here: a draft voice would make the outro a different
+    speaker than the body (an inauthenticity signal), so an unavailable brand voice just omits
+    the spoken outro instead of swapping voices mid-video."""
+    text = (outro_text or "").strip()
+    if not text:
+        return None
+
+    out_path = outro_voice_path(video_id)
+    try:
+        if checkpoint.is_done(video_id, OUTRO_STEP) and out_path.exists():
+            return out_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        status = char_guard.check_char_quota()
+        if status.exhausted:
+            log.warning(
+                "video %s: elevenlabs char quota spent (%s/%s) -> no spoken outro",
+                video_id, status.chars_used, status.quota,
+            )
+            return None
+        # ElevenLabs writes mp3_44100_192 straight to out_path; the outro card re-reads it.
+        synthesize_elevenlabs(
+            text, out_path, video_id=video_id,
+            prev_text=None, next_text=None, prev_request_ids=[],
+        )
+        if not out_path.exists() or out_path.stat().st_size == 0:
+            log.warning("video %s: outro synth produced no audio -> no spoken outro", video_id)
+            out_path.unlink(missing_ok=True)
+            return None
+    except (ProviderUnavailable, ProviderFailed, BudgetExceeded) as exc:
+        log.warning("video %s: spoken outro synth skipped (%s)", video_id, exc)
+        out_path.unlink(missing_ok=True)
+        return None
+    except Exception as exc:  # noqa: BLE001 - best-effort enhancement: never block voicing/render
+        log.warning("video %s: spoken outro synth failed unexpectedly (%s) -> skipping", video_id, exc)
+        out_path.unlink(missing_ok=True)
+        return None
+
+    # The checkpoint only lets a re-render skip re-billing; a write hiccup must not discard the
+    # good audio we just made or propagate out of this best-effort step.
+    try:
+        checkpoint.write(video_id, OUTRO_STEP, {"outro_voice_path": str(out_path)})
+    except Exception as exc:  # noqa: BLE001
+        log.warning("video %s: outro checkpoint write failed (%s) — audio kept", video_id, exc)
+    log.info("video %s: spoken outro voiced -> %s", video_id, out_path.name)
     return out_path
 
 

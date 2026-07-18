@@ -82,10 +82,15 @@ def assemble_video(video_id: int) -> dict:
     # of a dead silent card.
     intro = branding.make_intro(title or "", video_dir / "intro.mp4") if user_intro else None
     title_fx = None if user_intro else branding.cold_open_title_fx(title or "", video_dir)
+    # The spoken outro (if any) was synthesized in the voice step; assemble only consumes it,
+    # keeping the render path free of TTS/billing. Absent -> the card stays music/silence.
+    outro_voice = video_dir / "outro_voice.mp3"
     outro = branding.make_outro(
         video_dir / "outro.mp4",
         teaser=script_data.get("outro_teaser") or None,
         music=music_path,
+        voice=str(outro_voice) if outro_voice.exists() else None,
+        backdrop_image=_last_still_image(shot_list, video_dir / "img"),
     )
 
     segments_dir = video_dir / "segments"
@@ -127,6 +132,17 @@ def _persist_chapters(
         script_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:  # noqa: BLE001 - chapters are an enhancement, not a render dependency
         log.warning("chapter persist failed (%s) — continuing without chapters", exc)
+
+
+def _last_still_image(shot_list: list[dict], img_dir: Path) -> Path | None:
+    """The closing beat's still, walking back past any b-roll beats that have no per-beat image
+    (`beat_NN.jpg` naming matches segment_builder). Used as the outro card's documentary
+    backdrop so the card reads like the film's final frame. None when no still exists."""
+    for beat in reversed(shot_list):
+        img = img_dir / f"beat_{beat['beat_id']:02d}.jpg"
+        if img.exists():
+            return img
+    return None
 
 
 def _cleanup_intermediates(segments_dir: Path, files: list[Path]) -> None:

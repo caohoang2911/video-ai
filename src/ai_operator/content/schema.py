@@ -114,3 +114,8 @@ class ScriptOutput(BaseModel):
     # next-video/subscribe elements are on screen. Defaulted so older scripts still load;
     # the outro card falls back to a static line when empty.
     outro_teaser: str = ""
+    # Optional spoken close (~30-40 words) voiced over the ~12s end-screen card in the brand
+    # narrator voice: four beats — seal this story, bridge, open the next by kind, point to the
+    # on-screen video. Defaulted/optional: empty (or brand voice unavailable) -> the card keeps
+    # its music/silence, pre-spoken behaviour.
+    outro_spoken: str = ""

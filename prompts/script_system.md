@@ -181,10 +181,51 @@ them most-important first: one topic-specific, then broad niche ones.
 ## End-screen teaser
 
 `outro_teaser`: ONE line, **max ~90 characters**, shown on the closing end-screen card
-while the next-video and subscribe buttons are on screen. It must sell "one more story"
-with curiosity — never thank the viewer, never summarize, never name a specific next
-video (it isn't known yet). Example register: "History keeps its darkest stories in the
-footnotes. Here's another." Plain text: no quotes, no hashtags, no emoji.
+while the next-video and subscribe buttons are on screen. It is the channel's *handoff* —
+it must **close this story, then open the next**, in that order, so the viewer feels a
+resolved story AND an itch for one more. Plain text: no quotes, no hashtags, no emoji;
+never thank the viewer, never summarize the plot, never name a specific next video
+(YouTube auto-picks it — it isn't known here).
+
+Two-part formula — **SEAL, then CRACK** (both fit in the one line):
+  1. **SEAL** (close *this* story) — a half-line of closure: the fate landed, the record
+     shut, the silence after. Do NOT re-use the narration's final sentence — echo its
+     *feeling*: "The dock fell silent.", "The file was sealed and forgotten."
+  2. **CRACK** (open the *next*) — promise ONE more story of the same KIND, never by name:
+     another wreck, another cover-up, another disaster the record buried — a concrete but
+     withheld pull. The channel is a bottomless archive of these; make the next feel
+     already waiting.
+
+Register — the SEAL must earn the CRACK:
+- "History files its darkest stories in the footnotes. Here's another."
+- "852 souls, one sealed verdict - and the sea still hides worse."
+
+Calibration — avoid every one of these:
+- ✗ **opens without sealing** (abrupt ad, no closure): "Another shocking story is next."
+- ✗ **seals without opening** (dead end / sign-off): "A disaster we'll never forget. Thanks for watching."
+- ✗ **too vague** (no reachable gap): "There's always more to the story."
+- ✗ **names a specific next video** (not known here): "Next up: the Titanic's final hours."
+- ✓ **seal + evergreen open, one withheld pull**: "The rescue came too late - and it wasn't the last time."
+
+## Spoken outro
+
+`outro_spoken`: the narrator's spoken handoff, voiced over the end-screen card while the
+next-video and subscribe buttons are on screen. **~30-35 words, ≤3 short sentences** — it plays
+inside the card's 12-20s window, so aim short: an over-long close gets its final beat clipped at
+the ceiling. NOT a sign-off — four quick beats, **close then open**, written as plain running
+prose (no labels, no stage directions, no quotes/emoji). It shares the card with the on-screen
+`outro_teaser`, so it must **not restate that line verbatim** — the viewer reads one and hears
+the other; use different words:
+  1. **SEAL** (close *this* story) — echo the ending's *feeling*, do NOT repeat its final
+     sentence: "The dock fell silent, and the city moved on."
+  2. **LINK** (bridge) — one line into the channel's wider world: "But the record keeps more
+     than one secret like this."
+  3. **CRACK** (open the *next*) — promise the next story by *kind*, never by name, one
+     withheld pull: "The next was sealed for forty years - and it names names."
+  4. **POINT** (send them on) — one short line to the on-screen video: "It's on screen now -
+     press play."
+Never "thanks for watching", never a specific next-video title. Leave it `""` only when the
+story genuinely has no forward pull.
 
 ## Output format
 
@@ -211,7 +252,8 @@ exactly this shape:
   "description": "string — YouTube description, 2-4 sentences; the FIRST sentence must stand alone under 125 characters (it is the only line shown in search/suggested) and re-hook, not summarize",
   "tags": ["string", "... 10-15 SEO tags ..."],
   "hashtags": ["Shipwreck", "MaritimeHistory", "... 3-5, no spaces, no # ..."],
-  "outro_teaser": "string — one curiosity line (max ~90 chars) for the end-screen card"
+  "outro_teaser": "string — one line (max ~90 chars): SEAL this story's closure, then CRACK open the next by kind — never name a specific next video",
+  "outro_spoken": "string — ~30-35 words (≤3 sentences) voiced over the end-screen card: SEAL (close) → LINK (bridge) → CRACK (open next by kind) → POINT (send to the on-screen video); running prose, must not restate outro_teaser verbatim, no sign-off, empty string if none"
 }
 ```
 

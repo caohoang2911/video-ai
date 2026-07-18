@@ -26,6 +26,7 @@ log = get_logger("media.commands")
 
 _TTS_STEP = tts_narrator.STEP
 _TTS_CHUNKS_STEP = tts_narrator.CHUNKS_STEP
+_OUTRO_STEP = tts_narrator.OUTRO_STEP
 _VISUAL_STEP = "visual_fetch"
 # Must match assembler.video_builder.STEP -- referenced by string only (cross-phase handoff
 # is via files/DB/checkpoint keys, never direct imports between phase packages).
@@ -44,6 +45,9 @@ def gen_audio(video_id: int = typer.Option(..., "--video-id", help="videos.id to
         video = _load_video(session, video_id)
         script = _load_script(video)
         path = tts_narrator.synthesize(video_id, script["narration"])
+        # Optional spoken end-screen outro on the same brand voice — produced here alongside
+        # narration (best-effort, never blocks voicing) so assemble stays a pure render step.
+        tts_narrator.synthesize_outro(video_id, script.get("outro_spoken"))
         video.audio_path = str(path)
         _maybe_mark_voiced(video)
         session.commit()
@@ -96,7 +100,8 @@ def revoice(
     if not script_path or not Path(script_path).exists():
         typer.echo(f"video {video_id} has no script.json (nothing to re-voice)", err=True)
         raise typer.Exit(1)
-    narration_text = json.loads(Path(script_path).read_text(encoding="utf-8"))["narration"]
+    script = json.loads(Path(script_path).read_text(encoding="utf-8"))
+    narration_text = script["narration"]
 
     # (1) force a full ElevenLabs re-synth -- without dropping the cached narration + its
     # per-chunk progress, `synthesize` would just hand back the old (possibly edge-tts) audio.
@@ -129,6 +134,11 @@ def revoice(
     if final_path.exists():
         final_path.unlink()
     checkpoint.invalidate(video_id, _ASSEMBLE_STEP)
+
+    # Rebuild the spoken outro on the now-restored brand voice too (best-effort; the outro
+    # card degrades to music/silence if it still can't be synthesized).
+    checkpoint.invalidate(video_id, _OUTRO_STEP)
+    tts_narrator.synthesize_outro(video_id, script.get("outro_spoken"))
 
     with SessionLocal() as session:
         video = _load_video(session, video_id)

@@ -163,10 +163,17 @@ def make_intro(title: str, out: str | Path) -> Path:
 
 
 def make_outro(
-    out: str | Path, *, teaser: str | None = None, music: str | Path | None = None
+    out: str | Path,
+    *,
+    teaser: str | None = None,
+    music: str | Path | None = None,
+    voice: str | Path | None = None,
+    backdrop_image: str | Path | None = None,
 ) -> Path:
     """End-screen outro card: reserved zones for YouTube's next-video/subscribe elements,
-    a per-video teaser line, and (when given) the video's music bed fading back in."""
+    a per-video teaser line, the video's music bed fading back in (when given), an optional
+    spoken outro (`voice`) in the brand narrator voice, and an optional documentary backdrop
+    (`backdrop_image`, the closing still) graded under the text."""
     src = BRANDING_DIR / "outro.mp4"
     if src.exists():
         # A hand-made outro is used as-is (its own layout and audio) -- keeping its
@@ -174,5 +181,6 @@ def make_outro(
         return _normalize_user_clip(src, Path(out))
     log.info("assets/branding/outro.mp4 missing -> synthesizing an end-screen outro card")
     return endscreen_outro.build_endscreen_outro(
-        Path(out), font=_drawtext_font(), teaser=teaser, music=music
+        Path(out), font=_drawtext_font(), teaser=teaser, music=music, voice=voice,
+        backdrop_image=backdrop_image,
     )

@@ -43,6 +43,24 @@ def _tone(path: Path, *, seconds=2.0) -> None:
     )
 
 
+def _jpg(path: Path, *, color="white", size="1920x1080") -> None:
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c={color}:s={size}", "-frames:v", "1", str(path)],
+        check=True, capture_output=True,
+    )
+
+
+def _mean_luma(path: Path) -> float:
+    """Average frame luminance (YAVG); distinguishes a bright image backdrop from the flat dark card."""
+    out = subprocess.run(
+        ["ffmpeg", "-i", str(path), "-vf",
+         "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    vals = [float(ln.split("=")[-1]) for ln in out.stderr.splitlines() if "YAVG" in ln]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
 # --------------------------------------------------------------------------------------
 # srt_writer
 # --------------------------------------------------------------------------------------
@@ -203,3 +221,86 @@ def test_outro_card_fades_music_bed_back_in(tmp_path, _synth_outro_path):
 def test_outro_card_is_silent_without_music(tmp_path, _synth_outro_path):
     out = branding.make_outro(tmp_path / "outro.mp4", music=None)
     assert _mean_volume_db(out) < -80.0
+
+
+def test_outro_card_stretches_to_cover_spoken_voice(tmp_path, _synth_outro_path):
+    voice = tmp_path / "voice.mp3"
+    _tone(voice, seconds=14.0)
+    out = branding.make_outro(tmp_path / "outro.mp4", teaser="One more story", voice=voice)
+    a = next(s for s in _probe(out)["streams"] if s["codec_type"] == "audio")
+    assert a["codec_name"] == "aac" and int(a["channels"]) == 2
+    # voice(14s) + tail(2s) = 16s, inside the 12..20s end-screen window
+    assert abs(ffmpeg_encode.probe_duration(out) - 16.0) < 0.5
+    assert _mean_volume_db(out) > -50.0                  # the voice is actually on the card
+
+
+def test_outro_card_ducks_music_under_voice(tmp_path, _synth_outro_path):
+    bed = tmp_path / "bed.mp3"; _tone(bed, seconds=30.0)
+    voice = tmp_path / "voice.mp3"; _tone(voice, seconds=13.0)
+    out = branding.make_outro(tmp_path / "outro.mp4", teaser="One more story", music=bed, voice=voice)
+    a = next(s for s in _probe(out)["streams"] if s["codec_type"] == "audio")
+    assert a["codec_name"] == "aac" and int(a["channels"]) == 2
+    assert ffmpeg_encode.probe_duration(out) > endscreen_outro.OUTRO_SECONDS  # stretched past 12s
+    assert _mean_volume_db(out) > -50.0                  # voice + ducked bed are audible
+
+
+def test_outro_card_voice_only_is_audible(tmp_path, _synth_outro_path):
+    voice = tmp_path / "voice.mp3"; _tone(voice, seconds=13.0)
+    out = branding.make_outro(tmp_path / "outro.mp4", voice=voice, music=None)
+    assert _mean_volume_db(out) > -50.0                  # voice carries the card with no bed
+    assert ffmpeg_encode.probe_duration(out) > endscreen_outro.OUTRO_SECONDS
+
+
+def test_outro_card_caps_spoken_length_at_max(tmp_path, _synth_outro_path):
+    voice = tmp_path / "voice.mp3"; _tone(voice, seconds=25.0)
+    out = branding.make_outro(tmp_path / "outro.mp4", voice=voice)
+    # a long voice can't push the card past YouTube's 20s end-screen element ceiling
+    assert abs(ffmpeg_encode.probe_duration(out) - endscreen_outro.OUTRO_MAX_SECONDS) < 0.5
+
+
+def test_outro_card_degrades_on_unreadable_audio(tmp_path, _synth_outro_path):
+    # A 0-byte/corrupt voice or music file must NOT abort the render (best-effort contract):
+    # the bad input is dropped and the card falls back rather than crashing ffmpeg.
+    bad_voice = tmp_path / "voice.mp3"; bad_voice.write_bytes(b"")          # 0-byte voice
+    out = branding.make_outro(tmp_path / "outro.mp4", teaser="One more story", voice=bad_voice)
+    # voice dropped -> fixed 12s card, silent (no music either), no exception raised
+    assert abs(ffmpeg_encode.probe_duration(out) - endscreen_outro.OUTRO_SECONDS) < 0.3
+    assert _mean_volume_db(out) < -80.0
+
+    bad_music = tmp_path / "bed.mp3"; bad_music.write_bytes(b"not audio")   # corrupt bed
+    out2 = branding.make_outro(tmp_path / "outro2.mp4", music=bad_music)
+    assert _mean_volume_db(out2) < -80.0                                    # music dropped -> silent
+
+
+def test_outro_card_uses_documentary_backdrop(tmp_path, _synth_outro_path):
+    img = tmp_path / "beat_09.jpg"; _jpg(img, color="white")
+    out = branding.make_outro(tmp_path / "outro.mp4", teaser="One more story", backdrop_image=img)
+    streams = _probe(out)["streams"]
+    v = next(s for s in streams if s["codec_type"] == "video")
+    a = next(s for s in streams if s["codec_type"] == "audio")
+    assert (v["width"], v["height"]) == (1920, 1080) and v["pix_fmt"] == "yuv420p"
+    assert v["avg_frame_rate"] == "24/1" and a["codec_name"] == "aac" and int(a["channels"]) == 2
+    assert abs(ffmpeg_encode.probe_duration(out) - endscreen_outro.OUTRO_SECONDS) < 0.3  # no voice -> 12s
+    assert _mean_luma(out) > 60.0                          # darkened image backdrop, NOT the flat near-black card
+    assert not list(tmp_path.glob("*_backdrop.mp4"))       # temp backdrop cleaned up
+
+
+def test_outro_card_backdrop_falls_back_when_missing_or_corrupt(tmp_path, _synth_outro_path):
+    # missing image -> flat dark card, no crash
+    out = branding.make_outro(tmp_path / "o1.mp4", backdrop_image=tmp_path / "nope.jpg")
+    assert abs(ffmpeg_encode.probe_duration(out) - endscreen_outro.OUTRO_SECONDS) < 0.3
+    assert _mean_luma(out) < 30.0                          # flat dark fallback
+    # corrupt image -> render_segment fails -> graceful fallback, temp cleaned, no crash
+    bad = tmp_path / "beat_01.jpg"; bad.write_bytes(b"not a jpeg")
+    out2 = branding.make_outro(tmp_path / "o2.mp4", backdrop_image=bad)
+    assert _mean_luma(out2) < 30.0
+    assert not list(tmp_path.glob("*_backdrop.mp4"))
+
+
+def test_last_still_image_walks_back_past_broll(tmp_path):
+    from ai_operator.assembler import video_builder
+    img_dir = tmp_path / "img"; img_dir.mkdir()
+    (img_dir / "beat_03.jpg").write_bytes(b"x")            # last still is beat 3
+    shot = [{"beat_id": 1}, {"beat_id": 3}, {"beat_id": 7}]  # beat 7 (last) is b-roll, no image
+    assert video_builder._last_still_image(shot, img_dir) == img_dir / "beat_03.jpg"
+    assert video_builder._last_still_image([{"beat_id": 9}], img_dir) is None
