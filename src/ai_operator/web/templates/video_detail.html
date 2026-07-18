@@ -4,7 +4,7 @@
 {% set msg = request.query_params.get('msg') %}
 {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 
-<div id="vstatus" hx-get="/videos/{{ video.id }}" hx-trigger="every 3s" hx-select="#vstatus" hx-swap="outerHTML">
+<div id="vstatus"{% if is_live %} hx-get="/videos/{{ video.id }}" hx-trigger="every 3s" hx-select="#vstatus" hx-swap="outerHTML"{% endif %}>
   <p class="crumbs"><a href="/videos">Video</a> / #{{ video.id }}
     {% if video.kind == 'short' %} · short của <a href="/videos/{{ video.parent_id }}">#{{ video.parent_id }}</a>{% endif %}</p>
   <h1>Video #{{ video.id }} <span class="pill state-{{ video.state }}">{{ video.state }}</span>
@@ -53,10 +53,18 @@
     <section class="card">
       <h3>Shorts ({{ shorts | length }})</h3>
       {% if shorts %}
-      <table><thead><tr><th>ID</th><th>Trạng thái</th><th>Tiêu đề</th></tr></thead><tbody>
+      <table><thead><tr><th>ID</th><th>Trạng thái</th><th>Tiêu đề</th><th></th></tr></thead><tbody>
         {% for sh in shorts %}
         <tr><td><a href="/videos/{{ sh.id }}">#{{ sh.id }}</a></td>
-          <td><span class="pill state-{{ sh.state }}">{{ sh.state }}</span></td><td>{{ sh.title or '—' }}</td></tr>
+          <td><span class="pill state-{{ sh.state }}">{{ sh.state }}</span></td><td>{{ sh.title or '—' }}</td>
+          {# per-short re-render: gen-visuals re-rolls THIS short's stills + rebuilds it, siblings
+             untouched. Only voiced/rendered can re-roll (regen_short_visuals guards the rest). #}
+          <td>{% if sh.state in ['rendered', 'voiced'] %}
+            <form method="post" action="/videos/{{ sh.id }}/enqueue/gen-visuals" style="display:inline"
+                  onsubmit="return confirm('Re-roll ảnh và dựng lại short #{{ sh.id }}? (các short khác giữ nguyên)')">
+              <button type="submit" class="small">↻ Render lại</button>
+            </form>
+          {% else %}<span class="muted small">—</span>{% endif %}</td></tr>
         {% endfor %}
       </tbody></table>
       {% else %}<p class="muted">Chưa có short nào (tự tạo sau khi video chính được đăng).</p>{% endif %}

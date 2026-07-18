@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from ai_operator.db.engine import SessionLocal
 from ai_operator.db.models import Upload, Video
+from ai_operator.db.models_ops import Job
 from ai_operator.db.state_machine import VideoState
 from ai_operator.web.app import create_app
 
@@ -58,6 +60,22 @@ def test_missing_video_is_404(client):
     assert client.get("/api/videos/424242").status_code == 404
 
 
+def test_shorts_list_has_per_short_rerender_button(client):
+    # A main's shorts table offers a per-short re-render (gen-visuals) button — but only for
+    # re-rollable states (voiced/rendered); a short past review shows no button.
+    main_id = _seed_video(idempotency_key="m1", kind="main",
+                          state=VideoState.PUBLISHED.value, title="Main")
+    rendered = _seed_video(idempotency_key="s1", kind="short", parent_id=main_id,
+                           state=VideoState.RENDERED.value, title="Short rendered")
+    published = _seed_video(idempotency_key="s2", kind="short", parent_id=main_id,
+                            state=VideoState.PUBLISHED.value, title="Short published")
+
+    html = client.get(f"/videos/{main_id}").text
+    assert f"/videos/{rendered}/enqueue/gen-visuals" in html      # rendered short -> button
+    assert "Render lại" in html
+    assert f"/videos/{published}/enqueue/gen-visuals" not in html  # published short -> no button
+
+
 def test_channel_link_on_analytics_page_only(client):
     from ai_operator.config import settings
 
@@ -96,6 +114,35 @@ def test_state_filter(client):
     assert approved and all(v["state"] == "approved" for v in approved)
 
 
+def test_detail_polls_only_while_a_job_is_in_flight(client):
+    """The 3s auto-refresh is expensive (it re-fetches the whole detail page). A settled
+    video never changes on its own, so the poll must be OFF unless a job is pending/running
+    — otherwise every open tab hammers the server and the boosted UI feels stuck."""
+    vid = _seed_video(idempotency_key="poll", state=VideoState.RENDERED.value)
+
+    # settled render, no queued work -> no self-poll
+    assert 'hx-trigger="every 3s"' not in client.get(f"/videos/{vid}").text
+
+    with SessionLocal() as s:
+        s.add(Job(command="assemble", video_id=vid, status="running", idempotency_key="jp"))
+        s.commit()
+    # a job is now moving the video -> poll wakes up so the stepper tracks progress
+    assert 'hx-trigger="every 3s"' in client.get(f"/videos/{vid}").text
+
+
+def test_detail_survives_missing_retention_table(client):
+    """An un-migrated/partial DB (retention_curve absent) must not 500 the detail page —
+    the retention panel just hides. Regression for uploaded videos being unopenable."""
+    vid = _seed_video(idempotency_key="noret", state=VideoState.PUBLISHED.value)
+    with SessionLocal() as s:
+        s.add(Upload(video_id=vid, youtube_video_id="ret404xyz", status="published"))
+        s.commit()
+        s.execute(text("DROP TABLE retention_curve"))
+        s.commit()
+
+    assert client.get(f"/videos/{vid}").status_code == 200
+
+
 def test_media_url_is_none_for_deleted_artifact(tmp_path, monkeypatch):
     """The DB pointer can outlive its file (revoice deletes final.mp4 before the re-render
     lands) — a URL to a missing file must not be emitted, or the page shows a broken player."""
@@ -105,7 +152,9 @@ def test_media_url_is_none_for_deleted_artifact(tmp_path, monkeypatch):
     live = tmp_path / "3" / "final.mp4"
     live.parent.mkdir()
     live.write_bytes(b"x")
-    assert routes_videos._media_url(str(live)) == "/media/3/final.mp4"
+    url = routes_videos._media_url(str(live))
+    # carries an ?v=<mtime> cache-buster so a re-rendered artifact at the same path is refetched
+    assert url is not None and url.startswith("/media/3/final.mp4?v=")
 
     live.unlink()  # revoice tore the render down; the DB pointer is now stale
     assert routes_videos._media_url(str(live)) is None
