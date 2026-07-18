@@ -21,7 +21,7 @@ from ..config import OUTPUT_DIR, settings
 from ..db import InvalidTransition, SessionLocal, VideoState
 from ..db.models import Video
 from ..logging_setup import get_logger
-from . import ass_karaoke_writer, branding, ffmpeg_encode, kenburns_ffmpeg, srt_writer
+from . import ass_karaoke_writer, branding, ffmpeg_encode, headline_text, kenburns_ffmpeg, srt_writer
 from .caption_whisper import transcribe
 from .video_builder import STEP, _persist_rendered_state, _resolve_music_path
 
@@ -38,7 +38,7 @@ END_CARD_SECONDS = 3.0
 # taller than 16:9 (19.5:9, 20:9) cover-fill the 9:16 frame and crop up to ~10% off each
 # side, so caption lines must wrap well inside the frame or edge glyphs get cut on screen.
 _PORTRAIT_SUB_STYLE = (
-    "FontSize=11,Outline=2,Shadow=0,BorderStyle=1,Alignment=2,"
+    "FontSize=11,Bold=-1,Outline=0.9,Shadow=0.4,BorderStyle=1,Alignment=2,"
     "MarginV=85,MarginL=45,MarginR=45,"
     "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000"
 )
@@ -105,7 +105,9 @@ def build_short(video_id: int) -> dict:
         base, cap_path, narration_path, _resolve_music_path(video_id, video_dir),
         video_dir / "body.mp4", sub_style=cap_style,
         pre_fx=ffmpeg_encode.ambient_glow_fx(narration_dur, SHORT_SIZE),
-        post_fx=_pinned_title_fx(script.get("text_overlay") or "", video_dir),
+        post_fx=_pinned_title_fx(
+            script.get("overlay_headline") or script.get("text_overlay") or "", video_dir
+        ),
     )
     for f in video_dir.glob("hook_*.txt"):
         f.unlink(missing_ok=True)
@@ -178,24 +180,13 @@ def _portrait_still(src: Path, out: Path) -> Path:
 
 
 def _pinned_title_fx(overlay_text: str, video_dir: Path) -> str | None:
-    """Hook title pinned to the top blur band for the WHOLE body — static while the image
-    pans underneath (drawtext runs after zoompan), gold with a heavy outline (no box: the
-    blur band is the backdrop). One drawtext per line so each line self-centers; wrap is
-    wide enough that a 4-6 word hook lands on ~2 lines."""
-    if not overlay_text.strip():
-        return None
-    lines = textwrap.wrap(overlay_text, 18) or [" "]
-    draws = []
-    for i, line in enumerate(lines):
-        # burn_and_mux runs with cwd=video_dir -> textfiles referenced by basename
-        txt = video_dir / f"hook_{i}.txt"
-        txt.write_text(line, encoding="utf-8")
-        draws.append(
-            f"drawtext=fontfile='{branding._drawtext_font()}':textfile={txt.name}:"
-            f"fontcolor=0xF5C542:borderw=6:bordercolor=black:fontsize=84:"
-            f"x=(w-text_w)/2:y={96 + i * 105}"
-        )
-    return ",".join(draws)
+    """Hook headline pinned to the top blur band for the WHOLE body — static while the image
+    pans underneath (drawtext runs after zoompan). White-set / red-gap curiosity headline:
+    the setup line(s) off-white, the number/gap line red. See `headline_text` for the wrap,
+    fit and color logic; the case (Title vs UPPER) is a config pick."""
+    return headline_text.build_headline_fx(
+        overlay_text or "", video_dir, case=settings.SHORTS_HEADLINE_CASE
+    )
 
 
 _LOGO_PX = 220

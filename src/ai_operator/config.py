@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     # Falls back to SRT automatically when whisper yields no word timestamps.
     SHORTS_KARAOKE_CAPTIONS: bool = True
 
+    # Case of the Short's top-band curiosity headline: "title" renders it as authored
+    # (editorial look, matches the reference), "upper" uppercases it (louder). A/B design pick.
+    SHORTS_HEADLINE_CASE: str = "title"
+
     # --- web control panel (local only) ---
     # Bind loopback only: the panel has no auth, so it must never listen on 0.0.0.0.
     WEB_HOST: str = "127.0.0.1"

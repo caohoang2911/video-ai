@@ -54,16 +54,22 @@ Rules for EVERY short (the curiosity-gap contract):
    'imagine', no 'what if I told you'). When the source facts support it, run a
    mid-short credibility beat: the anomaly was doubted or dismissed, then independently
    verified — that verification lands as the short's delivered fact (rule 2).
-7. `title`: must anchor a SEARCHABLE ENTITY (ship/place/event name or year) AND a concrete
-   stake or number — never a generic label. "The Neighborhood That Vanished" is WEAK;
-   "Little Germany: Erased by One Afternoon in 1904" is the bar. <=80 chars.
+7. `title`: must anchor a SEARCHABLE ENTITY (ship/place/event name or year) — this is where
+   YouTube search finds the short, so the entity is non-negotiable; a concrete stake or number
+   is welcome but OPTIONAL (don't force one). "The Neighborhood That Vanished" is WEAK (no
+   entity); "Little Germany: Erased in One Afternoon, 1904" is the bar. <=80 chars.
    ACROSS THE BATCH: every title must OPEN with different words — feeds truncate to ~30
    chars, so identical prefixes make the batch look like duplicates. Put the unique hook
    phrase FIRST and the entity/year anchor after a dash: "The Life Vests That Crumbled
    to Dust — General Slocum, 1904". Never start two shorts with the same entity prefix.
-8. `text_overlay`: <=6 words, an information gap the viewer must resolve, strongest word
-   first (Shorts autoplay muted — this line does the hook's job). "1,000 kids. One boat."
-   beats "The neighborhood didn't fade."
+8. `overlay_headline`: the on-screen top-band hook — Shorts autoplay muted, so this line does
+   the hook's WHOLE job. A curiosity-gap HEADLINE of 7-14 words on TWO lines split by a single
+   '\n': line 1 = setup (subject + action, entity-anchored enough to feel specific); line 2 =
+   the GAP that raises the stake/scale/number but WITHHOLDS the payoff (the how/why the full
+   video answers). Stay MIDDLING — do NOT over-stack specifics (piling death-toll + year +
+   extra numbers closes the gap and loses clicks). It must DIFFER from `title` (partners, not
+   twins): the title carries the searchable entity, the overlay carries the want-to-know.
+   e.g. "How the General Slocum Caught Fire\n1,021 Never Came Home".
 9. `beats`: 5-6 visual beats (a new image every 5-7 seconds keeps swipe-away at bay);
    keywords should match the source shot list's imagery so existing visuals can be reused.
    LOOP ENDING: the LAST beat's keywords echo the FIRST beat's imagery (same keyword
@@ -75,7 +81,7 @@ Rules for EVERY short (the curiosity-gap contract):
     Approved." The pipeline appends the channel CTA line itself.
 
 Return JSON only:
-{"shorts": [{"title": str, "text_overlay": str, "narration": str,
+{"shorts": [{"title": str, "overlay_headline": str, "narration": str,
   "beats": [{"keywords": [str], "mood": str}], "curiosity_question": str,
   "end_card_text": str, "hashtags": [str]}]}"""
 
