@@ -9,7 +9,6 @@ never reworked. Shorts NEVER auto-publish — the human gate is the same as for 
 
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -30,6 +29,12 @@ from ..logging_setup import get_logger
 from ..media import tts_narrator
 from ..review.review_notifier import notify
 from ..assembler.short_builder import build_short
+from .shorts_image_provenance import (
+    IMAGE_ASSET_KINDS,
+    beats_used_by_siblings,
+    credit_copied_images,
+    still_md5s,
+)
 
 log = get_logger("ops.shorts_runner")
 
@@ -42,8 +47,6 @@ _DISCARDABLE = frozenset(
 # drag heavy CLIP/torch/render deps into every shorts import.
 _VISUAL_STEP = "visual_fetch"
 _ASSEMBLE_STEP = "assemble"
-# Asset kinds that carry a beat still's license record (vs music / video_broll rows).
-_IMAGE_ASSET_KINDS = ("stock", "archival", "gen")
 
 
 def generate_shorts(parent_video_id: int, *, force: bool = False) -> list[int]:
@@ -74,7 +77,9 @@ def generate_shorts(parent_video_id: int, *, force: bool = False) -> list[int]:
     # Offset keeps idempotency keys unique across re-rolls that kept published shorts.
     offset = _next_index(parent_video_id)
     child_ids: list[int] = []
-    batch_used: set[int] = set()  # parent images taken so far — keeps siblings visually distinct
+    # Parent images taken so far — keeps siblings visually distinct. Seeded from the shorts
+    # this parent already has on disk, so a second batch does not re-pick the same stills.
+    batch_used: set[int] = beats_used_by_siblings(parent_video_id, OUTPUT_DIR)
     for i, short in enumerate(shorts):
         try:
             child_ids.append(
@@ -232,17 +237,11 @@ def _discard_unpublished(children: list[Video]) -> None:
         log.info("discarded unpublished short %s (state=%s)", child.id, state)
 
 
-def _distinct_still_count(img_dir: Path) -> int:
+def _distinct_still_count(video_id: int, output_dir: Path) -> int:
     """How many VISUALLY DISTINCT stills the parent has. A parent that rendered from b-roll
     video keeps no still pool (often one duplicate archival leftover), so a raw file count
-    lies — dedup by md5 so the reuse-vs-refetch decision reflects real coverage."""
-    seen: set[str] = set()
-    for p in img_dir.glob("beat_*.jpg"):
-        try:
-            seen.add(hashlib.md5(p.read_bytes()).hexdigest())
-        except OSError:
-            continue
-    return len(seen)
+    lies — dedup by content hash so the reuse-vs-refetch decision reflects real coverage."""
+    return len(still_md5s(video_id, output_dir))
 
 
 def _source_short_images(
@@ -253,8 +252,7 @@ def _source_short_images(
     when it has enough DISTINCT ones (fast, no API); otherwise the parent rendered from
     b-roll video and has no still pool to draw on, so re-fetch fresh stills for the short's
     OWN keywords (archival -> stock -> generated) — exactly what build_short consumes."""
-    parent_img = OUTPUT_DIR / str(parent_id) / "img"
-    distinct = _distinct_still_count(parent_img)
+    distinct = _distinct_still_count(parent_id, OUTPUT_DIR)
     if distinct >= len(short.beats):
         _reuse_parent_images(parent_id, parent_script, child_id, short, batch_used)
         return
@@ -290,16 +288,10 @@ def _prune_stale_image_assets(child_id: int) -> None:
     """Drop image asset rows whose content no longer backs any img/beat_XX.jpg. After a
     re-roll they would otherwise keep licensing/crediting images that left the video —
     publish reads these rows to build the archival credit block in the description."""
-    img_dir = OUTPUT_DIR / str(child_id) / "img"
-    current: set[str] = set()
-    for p in img_dir.glob("beat_*.jpg"):
-        try:
-            current.add(hashlib.md5(p.read_bytes()).hexdigest())
-        except OSError:
-            continue
+    current = set(still_md5s(child_id, OUTPUT_DIR))
     with SessionLocal() as s:
         rows = s.scalars(
-            select(Asset).where(Asset.video_id == child_id, Asset.kind.in_(_IMAGE_ASSET_KINDS))
+            select(Asset).where(Asset.video_id == child_id, Asset.kind.in_(IMAGE_ASSET_KINDS))
         ).all()
         stale = [r for r in rows if r.md5 not in current]
         for row in stale:
@@ -343,3 +335,7 @@ def _reuse_parent_images(
         used.add(beat_id)
         batch_used.add(beat_id)
         shutil.copyfile(parent_img / f"beat_{beat_id:02d}.jpg", child_img / f"beat_{i + 1:02d}.jpg")
+
+    # After the copies land, not per beat: one session covers the whole short. Without a row
+    # of its own the child publishes the parent's licensed stills with no credit.
+    credit_copied_images(parent_id, child_id=child_id, output_dir=OUTPUT_DIR)

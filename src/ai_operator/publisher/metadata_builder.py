@@ -102,6 +102,11 @@ def build_short_description(
     # writes the exact credit line into the short's script.json at render time
     if script.get("music_credit"):
         parts.append(script["music_credit"])
+    # Per-file Wikimedia licensing follows the image, not the cut it appears in — a still
+    # reused from the parent needs the same credit here as it gets on the long-form video.
+    image_credits = script.get("image_credits") or []
+    if image_credits:
+        parts.append("Archival images:\n" + "\n".join(f"- {c}" for c in image_credits))
     parts.append(AI_DISCLOSURE)
     hashtags = [h for h in normalize_hashtags(script.get("hashtags") or []) if h.lower() != "#shorts"]
     if hashtags:
