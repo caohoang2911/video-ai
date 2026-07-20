@@ -15,6 +15,7 @@ more varied A/B set. Every fal step degrades to a PIL grade so a thumbnail is ne
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -48,9 +49,14 @@ _KONTEXT_INSTRUCTION = (
 )
 
 
-def generate(video_id: int) -> list[str]:
+def generate(video_id: int, *, same_hero: bool = False) -> list[str]:
     """Write `thumb_a.jpg`, `thumb_b.jpg`, `thumb_c.jpg` under output/<video_id>/ and
-    record the primary one on `videos.thumb_path`. Requires assemble() to have run."""
+    record the primary one on `videos.thumb_path`. Requires assemble() to have run.
+
+    `same_hero` puts the SAME prepared hero behind all three variants so they differ only in
+    headline. A default set varies image, copy and art style at once, so a Studio A/B winner
+    cannot be attributed to any of them; holding the image fixed makes the copy the only
+    variable. It is also cheaper — one Kontext/synthesis pass instead of per-variant work."""
     with SessionLocal() as session:
         video = session.get(Video, video_id)
         if video is None or not video.video_path:
@@ -75,32 +81,62 @@ def generate(video_id: int) -> list[str]:
     if not pool:
         pool = [video_path]
 
-    paths = []
-    for i in range(N_VARIANTS):
-        frame_path = video_dir / f"_thumb_frame_{i}.jpg"
-        variant_path = video_dir / f"thumb_{VARIANT_LETTERS[i]}.jpg"
-        source = pool[i % len(pool)]
-        credit = credits.get(str(source))  # only real archival photos carry a credit line
-        # each variant's punch line pairs with its title option; fall back to a title-derived
-        # hook when that option carried no thumbnail_text (older scripts).
-        headline = overlays[i] if i < len(overlays) and overlays[i].strip() else \
-            thumbnail_style.fallback_headline(title, subject)
-        try:
-            _extract_frame(source, frame_path)
-            # `_prepare_hero` returns True when the frame is ALREADY cinematically graded
-            # (Kontext hero / synthetic) -> skip the PIL grade so it is not double-graded.
-            already_graded = _prepare_hero(frame_path, hero_mode, video_id) if i == 0 else False
-            _overlay_text(frame_path, headline, variant_path, kicker, grade=not already_graded, credit=credit)
-        except Exception as exc:  # noqa: BLE001 - a bad source must never leave a variant missing
-            log.warning("thumb variant %s failed (%s) -> plain video keyframe", VARIANT_LETTERS[i], exc)
-            _extract_frame(video_path, frame_path)
-            _overlay_text(frame_path, headline, variant_path, kicker, grade=True)  # keyframe -> no credit
-        finally:
-            frame_path.unlink(missing_ok=True)
-        paths.append(str(variant_path))
+    # each variant's punch line pairs with its title option; fall back to a title-derived
+    # hook when that option carried no thumbnail_text (older scripts).
+    headlines = [
+        overlays[i] if i < len(overlays) and overlays[i].strip()
+        else thumbnail_style.fallback_headline(title, subject)
+        for i in range(N_VARIANTS)
+    ]
+    # With one shared hero the headline is the ONLY thing left that differs, so a script whose
+    # title options carry no distinct thumbnail_text would silently write three identical files
+    # and call it an A/B test. Refuse loudly instead — exactly the older scripts this path targets.
+    if same_hero and len(set(headlines)) < 2:
+        raise ValueError(
+            f"video {video_id}: same_hero needs distinct per-title thumbnail_text, but this script "
+            f"yields {len(set(headlines))} distinct headline(s) — all variants would be identical. "
+            "Regenerate the script, or generate without same_hero so the image varies instead."
+        )
 
-    if synth_path is not None:
-        synth_path.unlink(missing_ok=True)
+    paths = []
+    hero_cache: Path | None = None  # prepared hero frame, reused when every variant shares it
+    hero_graded = False
+    try:
+        for i in range(N_VARIANTS):
+            frame_path = video_dir / f"_thumb_frame_{i}.jpg"
+            variant_path = video_dir / f"thumb_{VARIANT_LETTERS[i]}.jpg"
+            source = pool[0] if same_hero else pool[i % len(pool)]
+            credit = credits.get(str(source))  # only real archival photos carry a credit line
+            headline = headlines[i]
+            try:
+                if hero_cache is not None:  # same_hero: reuse the already-prepared frame verbatim
+                    shutil.copy2(hero_cache, frame_path)
+                    already_graded = hero_graded
+                else:
+                    _extract_frame(source, frame_path)
+                    # `_prepare_hero` returns True when the frame is ALREADY cinematically graded
+                    # (Kontext hero / synthetic) -> skip the PIL grade so it is not double-graded.
+                    already_graded = _prepare_hero(frame_path, hero_mode, video_id) if i == 0 else False
+                _overlay_text(frame_path, headline, variant_path, kicker,
+                              grade=not already_graded, credit=credit)
+                if same_hero and hero_cache is None:
+                    # Cache only once the frame has actually produced a variant — caching earlier
+                    # would hand b/c a hero that a failed variant a never used.
+                    hero_cache = video_dir / "_thumb_hero.jpg"
+                    shutil.copy2(frame_path, hero_cache)
+                    hero_graded = already_graded
+            except Exception as exc:  # noqa: BLE001 - a bad source must never leave a variant missing
+                log.warning("thumb variant %s failed (%s) -> plain video keyframe", VARIANT_LETTERS[i], exc)
+                _extract_frame(video_path, frame_path)
+                _overlay_text(frame_path, headline, variant_path, kicker, grade=True)  # keyframe -> no credit
+            finally:
+                frame_path.unlink(missing_ok=True)
+            paths.append(str(variant_path))
+    finally:  # temps must not survive an abort partway through the variant loop
+        if synth_path is not None:
+            synth_path.unlink(missing_ok=True)
+        if hero_cache is not None:
+            hero_cache.unlink(missing_ok=True)
 
     with SessionLocal() as session:
         video = session.get(Video, video_id)
@@ -207,7 +243,14 @@ def _rank_relevance_first(scored: list[tuple[Path, float | None]]) -> list[Path]
     """Order gate-passers by event-relevance first; within a relevance band (`_RELEVANCE_TIE_EPS`)
     delegate to `thumbnail_frame_score.rank`, which orders by aesthetic punch AND drops
     near-duplicate frames — so two crops of one photo never take two A/B slots. Unscored images
-    (fail-open) all share one band -> pure frame-score order + dedup, the prior behaviour."""
+    (fail-open) all share one band -> pure frame-score order + dedup, the prior behaviour.
+
+    Frames unfit to face a video at all are dropped BEFORE banding. Ranking inside a band cannot
+    do it: a band holding exactly as many candidates as there are variants gives each one a slot
+    no matter how badly it scores, which is how scans of 1917 newsprint reached the A/B set."""
+    fit = [(p, rel) for p, rel in scored if thumbnail_frame_score.usable(p)]
+    scored = fit or scored  # everything unfit -> keep the field rather than return nothing
+
     bands: dict[int, list[Path]] = {}
     for path, rel in scored:
         band = round(rel / _RELEVANCE_TIE_EPS) if rel is not None else 0
@@ -297,13 +340,62 @@ def _hero_prompt(video: Video) -> str:
     # with the entity after a dash) so the synthetic hero draws the ACTUAL event; fall back to
     # the title's leading entity when the DB lookup yields nothing (detached/test video, no topic).
     subject = _subject_text(video.id) or extract_entity(video.title or "") or settings.NICHE
-    year = _event_year(OUTPUT_DIR / str(video.id) / "script.json")
+    script_path = OUTPUT_DIR / str(video.id) / "script.json"
+    year = _event_year(script_path)
     era = f", {year}" if year else ""
     return (
-        f"cinematic documentary movie-poster still of {subject}{era}, period-accurate detail, "
-        "dramatic low-key lighting, moody atmosphere, volumetric haze, deep shadows, "
-        "teal and amber color grade, photorealistic, ultra detailed, no text, no watermark"
+        f"cinematic documentary movie-poster still of {_visual_subject(subject, script_path, video.id)}{era}, "
+        "period-accurate detail, dramatic low-key lighting, moody atmosphere, volumetric haze, "
+        "deep shadows, teal and amber color grade, photorealistic, ultra detailed, "
+        "no text, no watermark"
     )
+
+
+def _visual_subject(subject: str, script_path: Path, video_id: int) -> str:
+    """Turn a bare subject NAME into what that subject physically IS, for the image generator.
+
+    A name on its own is ambiguous to a text-to-image model in a way it never is to a reader:
+    the 1891 excursion steamboat "General Slocum" renders as a military officer in dress
+    uniform, because "General" reads as a rank. One cheap text call, grounded in the script's
+    own narration, resolves that ("the wooden excursion steamboat General Slocum"). Degrades to
+    the bare subject on any failure — a slightly generic hero beats no hero."""
+    context = _narration_excerpt(script_path)
+    if not subject or not context:
+        return subject
+    from ..content import llm_client  # lazy: keep the content package off this import path
+
+    try:
+        phrase = llm_client.complete(
+            "You identify what a historical subject physically is, so an image generator draws "
+            "the right thing. Reply with ONE noun phrase of at most 10 words that states the KIND "
+            "of object, vessel, structure or place AND keeps the subject's proper name — e.g. "
+            "'the paddle steamboat General Slocum'. Never describe a person unless the subject "
+            "truly is one. No punctuation, no explanation.",
+            f'Subject: "{subject}"\n\nFrom the documentary narration:\n{context}',
+            max_tokens=32,
+            step="thumb_hero_subject",
+            video_id=video_id,
+        ).strip()
+    except Exception as exc:  # noqa: BLE001 - never block a thumbnail on the disambiguation call
+        log.warning("hero subject disambiguation failed (%s) -> bare subject", exc)
+        return subject
+    # A rambling or empty answer is worse than the plain name; only take a tight noun phrase.
+    if not phrase or len(phrase.split()) > 12:
+        return subject
+    log.info("hero subject %r -> %r", subject, phrase)
+    return phrase
+
+
+def _narration_excerpt(script_path: Path, limit: int = 600) -> str:
+    """Opening narration, which states what the subject is before any hook language. Empty
+    when the script is missing or unreadable."""
+    if not script_path.exists():
+        return ""
+    try:
+        narration = json.loads(script_path.read_text(encoding="utf-8")).get("narration") or ""
+    except (json.JSONDecodeError, OSError):
+        return ""
+    return str(narration)[:limit]
 
 
 def _extract_frame(src: Path, out_path: Path) -> None:

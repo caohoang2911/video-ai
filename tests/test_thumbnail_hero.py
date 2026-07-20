@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ai_operator.assembler import thumbnail_generator as tg
 
 
@@ -223,3 +225,90 @@ def test_generate_kontext_hero_is_not_double_graded(monkeypatch, tmp_path):
     assert grades["thumb_a.jpg"] is False  # already-graded hero -> PIL grade SKIPPED
     assert grades["thumb_b.jpg"] is True   # real frames -> PIL grade applied
     assert grades["thumb_c.jpg"] is True
+
+
+def _generate_harness(monkeypatch, tmp_path, overlays):
+    """Drive `generate` with the DB, ffmpeg, fal and the relevance gate all stubbed out.
+    Returns the list that records every `_extract_frame` source, and the per-variant headline."""
+
+    class _V:
+        video_path = str(tmp_path / "v.mp4")
+        title = "The General Slocum Never Reached the Nearest Shore"
+        thumb_path = None
+
+    class _S:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, model, vid):
+            return _V()
+
+        def commit(self):
+            pass
+
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    (tmp_path / "9").mkdir(exist_ok=True)
+    pool = [tmp_path / f"{c}.jpg" for c in "abc"]
+    extracted: list[str] = []
+    headlines: dict[str, str] = {}
+
+    monkeypatch.setattr(tg, "SessionLocal", lambda: _S())
+    monkeypatch.setattr(tg, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(tg, "_overlay_texts", lambda p: overlays)
+    monkeypatch.setattr(tg, "_gated_pools", lambda vid: (pool, [], "General Slocum"))
+    monkeypatch.setattr(tg, "_pick_hero", lambda v, a, vid: (pool[0], "archival", None))
+    monkeypatch.setattr(tg, "_archival_credits", lambda vid: {})
+    monkeypatch.setattr(tg, "_prepare_hero", lambda fp, mode, vid: True)
+    monkeypatch.setattr(
+        tg, "_extract_frame",
+        lambda src, out: (extracted.append(Path(src).name), Path(out).write_bytes(b"f")),
+    )
+    monkeypatch.setattr(
+        tg, "_overlay_text",
+        lambda fp, text, out, kicker, grade=True, credit=None: (
+            headlines.__setitem__(Path(out).name, text), Path(out).write_bytes(b"o")
+        ),
+    )
+    return extracted, headlines
+
+
+def test_same_hero_extracts_one_frame_and_varies_only_the_headline(monkeypatch, tmp_path):
+    """The point of the flag: one shared image so a Studio A/B varies copy alone."""
+    extracted, headlines = _generate_harness(
+        monkeypatch, tmp_path, ["ONE MILE AWAY", "STILL WITHIN SIGHT", "ROTTED AND USELESS"]
+    )
+    tg.generate(9, same_hero=True)
+
+    assert extracted == ["a.jpg"]  # b/c copy the prepared hero instead of re-extracting
+    assert len(set(headlines.values())) == 3
+    assert headlines["thumb_a.jpg"] == "ONE MILE AWAY"
+
+
+def test_same_hero_refuses_when_the_script_yields_one_headline(monkeypatch, tmp_path):
+    """No per-title thumbnail_text (older scripts) collapses every variant to the same fallback
+    headline; with a shared hero too, all three files would be identical. Fail loudly."""
+    _generate_harness(monkeypatch, tmp_path, [])  # no overlays -> fallback headline for all 3
+    with pytest.raises(ValueError, match="distinct"):
+        tg.generate(9, same_hero=True)
+
+
+def test_default_generate_still_varies_the_image(monkeypatch, tmp_path):
+    """Without the flag each variant keeps its own source frame — unchanged prior behaviour."""
+    extracted, _ = _generate_harness(monkeypatch, tmp_path, ["A", "B", "C"])
+    tg.generate(9)
+    assert extracted == ["a.jpg", "b.jpg", "c.jpg"]
+
+
+def test_rank_relevance_first_drops_unusable_before_banding(monkeypatch):
+    """A relevance band holding exactly as many candidates as there are variants would hand a
+    slot to every one of them, however unusable — so unfit frames must go before banding."""
+    good, scan = Path("good.jpg"), Path("scan.jpg")
+    monkeypatch.setattr(tg.thumbnail_frame_score, "usable", lambda p: p.name != "scan.jpg")
+    monkeypatch.setattr(tg.thumbnail_frame_score, "rank", lambda paths, n: paths[:n])
+
+    assert tg._rank_relevance_first([(good, 1.0), (scan, 1.0)]) == [good]
+    # everything unfit -> keep the field rather than leave the video with no thumbnail source
+    assert tg._rank_relevance_first([(scan, 1.0)]) == [scan]

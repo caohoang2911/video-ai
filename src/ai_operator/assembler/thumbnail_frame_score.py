@@ -27,6 +27,13 @@ _FLAT_CONTRAST = 0.10
 _DEDUPE_SIZE = (32, 18)
 _DUPLICATE_MAE = 0.10
 
+# Below this a frame is unusable AT ANY RANK, not merely worse: measured across every rendered
+# video, photographic candidates all score above 0.3 while print scans (newspaper pages, trade
+# advertisements) and foliage-busy modern snapshots all score below 0. Ordering alone cannot
+# express that — when a candidate group holds only as many images as there are variants, the
+# worst one still takes a slot however far it is demoted. So drop them outright.
+_UNUSABLE_SCORE = 0.0
+
 
 def score_image(img: Image.Image) -> float:
     """Higher is better. Combines global contrast + edge detail, penalizing frames that
@@ -55,17 +62,30 @@ def score_path(path: Path) -> float:
         return float("-inf")
 
 
+def usable(path: Path) -> bool:
+    """Whether a frame is fit to face a video at all. Callers that group candidates before
+    ranking (by event relevance, say) must filter with this FIRST: `rank` can only order
+    within the group it is given, so a group holding exactly as many candidates as there are
+    variants hands every one of them a slot however bad they are."""
+    return score_path(path) > _UNUSABLE_SCORE
+
+
 def rank(paths: list[Path], n: int) -> list[Path]:
     """Top-`n` paths by score, best first, skipping near-duplicates of already-picked frames
     (the same archival photo often backs several beats as different crops — two variants of
-    one photo would waste an A/B slot). Dedupe is relaxed rather than coming up short; a
-    literally-repeated Path is still returned only once."""
+    one photo would waste an A/B slot). Unusable frames are passed over while anything else
+    remains, but both filters are relaxed rather than coming up short: an all-unusable pool
+    still yields its best members, and a literally-repeated Path is returned only once."""
     if n <= 0:
         return []
-    scored = sorted(paths, key=score_path, reverse=True)
+    scores = {p: score_path(p) for p in paths}
+    ordered = sorted(scores, key=lambda p: scores[p], reverse=True)
+
     picked: list[Path] = []
     fingerprints: list[np.ndarray | None] = []
-    for p in scored:
+    for p in ordered:  # first choice: usable AND visually distinct
+        if scores[p] <= _UNUSABLE_SCORE:
+            break  # `ordered` is descending, so nothing past here is usable either
         fp = _fingerprint(p)
         if fp is not None and any(
             f is not None and float(np.abs(fp - f).mean()) < _DUPLICATE_MAE for f in fingerprints
@@ -75,11 +95,14 @@ def rank(paths: list[Path], n: int) -> list[Path]:
         fingerprints.append(fp)
         if len(picked) == n:
             return picked
-    for p in scored:  # not enough distinct frames -> fill with best duplicates
+    # Short of distinct frames, fill by score. Descending order means a second crop of a real
+    # photograph (still a usable thumbnail) is reached for before any print scan, and an
+    # unusable frame only to avoid returning fewer than asked.
+    for p in ordered:
         if p not in picked:
             picked.append(p)
             if len(picked) == n:
-                break
+                return picked
     return picked
 
 

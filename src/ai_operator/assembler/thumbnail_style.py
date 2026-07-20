@@ -24,7 +24,18 @@ STROKE_COLOR = (0, 0, 0)
 CREDIT_COLOR = (208, 208, 208)  # muted grey for the bottom-right photo-attribution line
 MAX_LINES = 4
 _MAX_FONT, _MIN_FONT = 156, 44
-_KICKER_TRACKING = 0.16  # letter-spacing as a fraction of the kicker font size
+# Letter-spacing as a fraction of the kicker font size. Tracked-out caps are a large-size
+# device; every point of tracking is width the type size has to pay for, so this stays modest.
+_KICKER_TRACKING = 0.10
+# The kicker is ONE thin line, so it does not need the headline's off-subject column — that
+# column exists to keep the big headline off the subject. Sizing the kicker to it made string
+# length drive type size (a longer event name rendered SMALLER), bottoming out around 7px on a
+# phone-width grid cell. It gets the width of the SCRIM instead: the scrim is what darkens the
+# ground behind the type, so running past it would put brass on an unmuted background. A floor
+# stops the type shrinking further; below it the string is shortened instead.
+_KICKER_MIN_FRAME = 0.055  # floor type size as a fraction of frame height (~40px at 720p)
+_SCRIM_BAND = 0.72       # width fraction of the left/right tonal band (rest stays fully bright)
+_SCRIM_SOLID = 0.55      # inner fraction of that band held at full peak (behind the headline)
 
 # Heavy display faces make a headline read at phone size; PIL's bitmap default does not.
 _THUMB_FONTS = (
@@ -79,7 +90,13 @@ def draw_title(
     # Moody, historical whole-frame dim (subject included) so the thick-stroked title reads
     # WITHOUT a drop shadow — heavier when the frame is bright, barely on an already-dark one.
     _historical_dim(img)
-    _gradient_scrim(img, region, side, peak=_scrim_peak(img, region, needs_bar))
+    # For the left/right poster column the scrim spans the FULL frame height (a fixed side band),
+    # not just the headline's vertical box, so the dark→bright tonal split is evenly distributed
+    # down the whole edge and stays put even when the headline slides up/down to dodge a subject.
+    w, h = img.size
+    scrim_box = (0, 0, int(w * _SCRIM_BAND), h) if side == "left" else \
+        (int(w * (1 - _SCRIM_BAND)), 0, w, h) if side == "right" else region
+    _gradient_scrim(img, scrim_box, side, peak=_scrim_peak(img, region, needs_bar))
 
     x0, y0, x1, y1 = region
     pad = int((x1 - x0) * 0.04)
@@ -89,12 +106,21 @@ def draw_title(
     y = iy0
 
     if kicker:
-        kfont = _fit_kicker(kicker, inner_w, base=max(24, min(50, int(inner_w * 0.072))))
+        # Run to the edge of the scrim band, never past it, and never off canvas.
+        kicker_x1 = min(w - pad, int(w * _SCRIM_BAND) if side == "left" else w - pad)
+        kicker_w = max(inner_w, kicker_x1 - ix0)
+        kfont, kicker = _fit_kicker(
+            kicker, kicker_w,
+            base=max(24, min(50, int(kicker_w * 0.072))),
+            floor=max(24, int(h * _KICKER_MIN_FRAME)),
+        )
         kstroke = max(2, kfont.size // 13)
         x_end = _draw_spaced(draw, (ix0, y), kicker, kfont, KICKER_COLOR, stroke=kstroke)
         rule_y = y + int(kfont.size * 1.20)
         rule_h = max(3, kfont.size // 9)
-        draw.rectangle([ix0, rule_y, min(x_end, ix1), rule_y + rule_h], fill=KICKER_COLOR)
+        # Rule tracks the kicker's own budget, not the headline column, or it stops short of
+        # the text it is underlining.
+        draw.rectangle([ix0, rule_y, min(x_end, ix0 + kicker_w), rule_y + rule_h], fill=KICKER_COLOR)
         y = rule_y + rule_h + int(kfont.size * 0.55)
 
     if headline:
@@ -221,8 +247,14 @@ def _gradient_scrim(img: Image.Image, box: tuple[int, int, int, int], side: str,
         return
     alpha = np.zeros((h, w), dtype=np.float32)
     if side in ("left", "right"):
+        # `d` = 1 at the text edge -> 0 at the far (subject) edge. Hold full peak across the
+        # inner _SCRIM_SOLID of the band (behind the headline, so it always reads) then
+        # smooth-step down to 0, giving a clean dark-text -> bright-subject tonal distribution
+        # instead of a linear fade that already halves the darkness by mid-headline.
         t = np.linspace(0.0, 1.0, bw, dtype=np.float32)
-        ramp = peak * (1.0 - t) if side == "left" else peak * t
+        d = (1.0 - t) if side == "left" else t
+        g = np.clip(d / _SCRIM_SOLID, 0.0, 1.0)
+        ramp = peak * (g * g * (3.0 - 2.0 * g))  # smoothstep ease on the outer transition
         alpha[y0:y1, x0:x1] = np.tile(ramp, (bh, 1))
     else:
         t = np.linspace(0.0, 1.0, bh, dtype=np.float32)
@@ -249,12 +281,28 @@ def _spaced_w(text: str, font: ImageFont.FreeTypeFont) -> int:
     return sum(_text_w(ch, font) + gap for ch in text)
 
 
-def _fit_kicker(text: str, max_w: int, base: int) -> ImageFont.FreeTypeFont:
-    """Shrink the kicker until its letter-spaced width fits the column."""
+def _fit_kicker(text: str, max_w: int, base: int, floor: int) -> tuple[ImageFont.FreeTypeFont, str]:
+    """Largest kicker that fits `max_w`, never smaller than `floor`. Once the floor is reached
+    the STRING gives way instead of the type: a leading article goes first, then trailing words
+    of the subject, always keeping the trailing `· YEAR` — an unreadable full name is worth less
+    than a readable short one plus the era. Returns the font and the (possibly shortened) text."""
     size = base
-    while size > 16 and _spaced_w(text, _load_font(size)) > max_w:
+    while size > floor and _spaced_w(text, _load_font(size)) > max_w:
         size -= 2
-    return _load_font(size)
+    font = _load_font(size)
+    if _spaced_w(text, font) <= max_w:
+        return font, text
+
+    subject, sep, year = text.partition(" · ")
+    words = subject.split()
+    if words and words[0] == "THE":
+        words = words[1:]
+    while words:
+        candidate = " ".join(words) + sep + year
+        if _spaced_w(candidate, font) <= max_w:
+            return font, candidate
+        words = words[:-1]
+    return font, (year or text)  # subject exhausted -> the era alone still reads
 
 
 def _draw_spaced(draw, xy, text, font, color, *, stroke) -> int:
@@ -297,7 +345,9 @@ def _scrim_peak(img: Image.Image, box: tuple[int, int, int, int], needs_bar: boo
     arr = np.asarray(img.crop((x0, y0, x1, y1)).convert("L"), dtype=np.float32) / 255.0
     lum = float(arr.mean())
     contrast = min(1.0, float(arr.std()) / 0.22)  # local busyness/contrast, normalized ~0..1
-    return min(0.80, 0.34 + 0.34 * lum + 0.12 * contrast + (0.08 if needs_bar else 0.0))
+    # Floor raised so even a dark region keeps a solid text-side scrim; scales up with a
+    # brighter/busier column so a plaque or a sunlit hull behind the headline still reads.
+    return min(0.84, 0.42 + 0.32 * lum + 0.12 * contrast + (0.10 if needs_bar else 0.0))
 
 
 def _wrap(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
