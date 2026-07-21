@@ -9,6 +9,9 @@ dependencies: [2]
 
 # Phase 5 (Optional): Thumbnail hero bằng fal FLUX
 
+> ⏭ SUPERSEDED (2026-07-17) bởi plan riêng `plans/260717-2335-thumbnail-hybrid-cinematic-upgrade/`
+> (hybrid archival-first + cổng relevance + FLUX hero fallback + template cinematic). Không làm ở đây.
+
 ## Overview
 Surface RIÊNG, không bắt buộc: dùng fal FLUX sinh ẢNH HERO cinematic photoreal cho thumbnail, ghép text-block (POC đã có). Tách khỏi core replace-generator.
 

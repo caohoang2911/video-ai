@@ -6,9 +6,10 @@ embedded here (ffmpeg's force_style would clobber the karaoke colours, so burn_a
 called with sub_style=None). Long-form keeps the plain SRT path untouched.
 
 Style = rendered-pixel parity with short_builder._PORTRAIT_SUB_STYLE (that style is script
-units on libass' default 384x288 grid; here the grid IS the 1080x1920 frame): ~73px white
-text, heavy black outline, block held above the Shorts UI zone, side margins inside the
-tall-phone cover-crop. Spoken words fill white; upcoming words wait dimmed grey.
+units on libass' default 384x288 grid; here the grid IS the 1080x1920 frame): ~73px bold
+white text, thin black outline + soft drop shadow (outline ~8% of glyph height, not the
+old fat 18%), block held above the Shorts UI zone, side margins inside the tall-phone
+cover-crop. Spoken words fill white; upcoming words wait dimmed grey.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,Arial,73,&H00FFFFFF,&H009E9E9E,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,13,0,2,127,127,567,1
+Style: Karaoke,Arial,73,&H00FFFFFF,&H009E9E9E,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,6,3,2,127,127,567,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

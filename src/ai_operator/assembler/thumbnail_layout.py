@@ -19,19 +19,17 @@ from PIL import Image
 _ANALYSIS_SIZE = (160, 90)  # small luminance grid; gradient stats are stable at this size
 
 # Candidate text regions as (x0, y0, x1, y1) fractions plus a small preference bonus
-# (subtracted from busyness) so near-ties favor the tall left column — the "movie-poster"
-# placement (headline down one edge, subject breathing on the other). Every candidate is a
-# BLOCK no wider than ~55% (never a full-width band): a headline always wraps into a left-
-# aligned column instead of one thin full-width line, and the scrim only darkens one side.
-# Biases just break near-ties; a clearly busier block still yields to a calmer one so the
-# subject is never buried. Tall columns first, then the four corner blocks.
+# (subtracted from busyness). The headline is LEFT-LOCKED — every candidate shares the same
+# left edge and ~52% right edge, so the title always reads as a movie-poster column down the
+# LEFT with the subject breathing on the right, synchronized across all variants (never
+# jumping to the right or a corner). Only the VERTICAL band flexes: the tall column is the
+# strong default, and top-/bottom-left let the headline slide up or down to dodge the busiest
+# left band (a face or detail sitting mid-left) while staying on the left. Biases just break
+# near-ties; a clearly busier band still yields to a calmer one.
 _CANDIDATES = (
-    ("left", (0.045, 0.11, 0.52, 0.86), 0.014),
-    ("right", (0.48, 0.11, 0.955, 0.86), 0.008),
-    ("bottom-left", (0.045, 0.46, 0.60, 0.94), 0.010),
-    ("top-left", (0.045, 0.06, 0.60, 0.52), 0.006),
-    ("bottom-right", (0.40, 0.46, 0.955, 0.94), 0.004),
-    ("top-right", (0.40, 0.06, 0.955, 0.52), 0.002),
+    ("left", (0.045, 0.10, 0.52, 0.88), 0.022),
+    ("bottom-left", (0.045, 0.44, 0.52, 0.92), 0.008),
+    ("top-left", (0.045, 0.07, 0.52, 0.56), 0.006),
 )
 
 # Mean gradient magnitude (0..1 luminance) above which a region reads as "busy". Empty
