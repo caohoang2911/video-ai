@@ -211,7 +211,7 @@ def test_fetch_archival_skips_urls_already_used_by_earlier_beats(monkeypatch):
     monkeypatch.setattr(visual_fetcher, "_rank_candidates", lambda text, c: list(c))
     # the beat-match floor has its own tests; here every candidate is on-beat
     monkeypatch.setattr(visual_fetcher, "_first_beat_relevant",
-                        lambda ranked, text, video_id: ranked[0] if ranked else None)
+                        lambda ranked, text, video_id, stats=None: ranked[0] if ranked else None)
 
     first = visual_fetcher._fetch_archival(["kw"], "t", "Event", set())
     assert first["url"] == "u1"
@@ -538,3 +538,29 @@ def test_query_ladder_pins_the_year_before_the_bare_anchor():
 def test_query_ladder_without_a_year_is_the_old_two_rungs():
     labels = [label for label, _ in visual_fetcher._archival_queries(["plane"], "Halifax", "")]
     assert labels == ["anchor+keywords", "anchor"]
+
+
+def test_a_blind_beat_gate_raises_the_alarm(monkeypatch):
+    """Partial blindness is the failure that happens: a quota lets the first beats through and
+    rejects the rest, and every one of those keeps an unvetted photograph while the run looks
+    healthy. The thumbnail gate has warned about this since it was written."""
+    import ai_operator.ops.alerting as alerting
+
+    alerts: list[str] = []
+    monkeypatch.setattr(alerting, "alert", lambda msg: alerts.append(msg))
+
+    visual_fetcher._alert_if_gate_went_blind(7, {"attempted": 6, "unjudged": 3})
+
+    assert len(alerts) == 1 and "3/6" in alerts[0]
+
+
+def test_one_flaky_beat_is_not_an_alarm(monkeypatch):
+    import ai_operator.ops.alerting as alerting
+
+    alerts: list[str] = []
+    monkeypatch.setattr(alerting, "alert", lambda msg: alerts.append(msg))
+
+    visual_fetcher._alert_if_gate_went_blind(7, {"attempted": 6, "unjudged": 1})
+    visual_fetcher._alert_if_gate_went_blind(7, {})  # no archival beats at all
+
+    assert alerts == []

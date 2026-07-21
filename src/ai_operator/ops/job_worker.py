@@ -98,7 +98,10 @@ def _revoice(job: Job) -> None:
 
 def _assemble(job: Job) -> None:
     video_id = _require_video(job)
-    assemble_video(video_id)
+    result = assemble_video(video_id)
+    if result.get("skipped"):  # nothing re-rendered -> nothing to re-cut a thumbnail from
+        log.info("job %s: assemble skipped for video %s, leaving thumbnails alone", job.id, video_id)
+        return
     generate_thumbnails(video_id)  # mirrors the `assemble` CLI command (render + thumbs)
 
 

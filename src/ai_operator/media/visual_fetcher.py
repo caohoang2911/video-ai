@@ -267,7 +267,7 @@ def _archival_anchor(video_id: int) -> str:
 
 def _fetch_archival(
     keywords: list[str], text: str = "", anchor: str = "", used: set[str] | None = None,
-    video_id: int | None = None, era: str = "",
+    video_id: int | None = None, era: str = "", stats: dict | None = None,
 ) -> dict | None:
     """Most content-relevant Wikimedia Commons ARCHIVAL photo candidate for a beat
     (already license- and resolution-filtered by the client); None when Commons has
@@ -286,7 +286,7 @@ def _fetch_archival(
     ranked = _rank_candidates(text, cands)
     if used:
         ranked = [c for c in ranked if c["url"] not in used]
-    return _first_beat_relevant(ranked, text, video_id)
+    return _first_beat_relevant(ranked, text, video_id, stats)
 
 
 def _archival_queries(keywords: list[str], anchor: str, era: str) -> list[tuple[str, str]]:
@@ -311,7 +311,9 @@ def _archival_queries(keywords: list[str], anchor: str, era: str) -> list[tuple[
     return [(label, q) for label, q in queries if q]
 
 
-def _first_beat_relevant(ranked: list[dict], text: str, video_id: int | None) -> dict | None:
+def _first_beat_relevant(
+    ranked: list[dict], text: str, video_id: int | None, stats: dict | None = None
+) -> dict | None:
     """The best-ranked candidate that actually shows what this beat narrates, or None.
 
     CLIP only ORDERS candidates, it never rejects: the top of an entirely off-beat pool still
@@ -334,7 +336,10 @@ def _first_beat_relevant(ranked: list[dict], text: str, video_id: int | None) ->
     candidates that were never judged."""
     if not ranked:
         return None
+    if stats is not None:
+        stats["attempted"] = stats.get("attempted", 0) + 1
     if not text:
+        _note_unjudged(stats)
         return ranked[0]
     from ..content import llm_client  # lazy: keeps the content package off this import path
 
@@ -351,6 +356,7 @@ def _first_beat_relevant(ranked: list[dict], text: str, video_id: int | None) ->
             score = llm_client.score_scene_match(text, thumb.read_bytes(), video_id=video_id)
             if score is None:
                 log.warning("archival beat-match unjudged -> falling back to the best un-rejected candidate")
+                _note_unjudged(stats)
                 return _first_unrejected(ranked, rejected)
             judged += 1
             log.info("archival beat-match %.2f (min %.2f) img=%s",
@@ -360,12 +366,36 @@ def _first_beat_relevant(ranked: list[dict], text: str, video_id: int | None) ->
             rejected.add(i)
     if downloaded == 0:  # every preview 404'd/throttled -- the gate never got to look at anything
         log.warning("archival beat-match saw no downloadable preview -> keeping the top candidate un-vetted")
+        _note_unjudged(stats)
         return ranked[0]
     return None
 
 
 def _first_unrejected(ranked: list[dict], rejected: set[int]) -> dict | None:
     return next((c for i, c in enumerate(ranked) if i not in rejected), None)
+
+
+def _note_unjudged(stats: dict | None) -> None:
+    if stats is not None:
+        stats["unjudged"] = stats.get("unjudged", 0) + 1
+
+
+def _alert_if_gate_went_blind(video_id: int, stats: dict) -> None:
+    """One operator signal when the beat gate stopped being a gate.
+
+    Partial blindness is the failure that actually happens -- a per-minute quota lets the first
+    beats through and rejects the rest, or Wikimedia throttles the previews -- and every one of
+    those beats keeps an unvetted photograph while the run looks healthy. The thumbnail gate has
+    raised this alarm since it was written; the beat gate only wrote a log line nobody reads.
+    Half the pool is the same bar: one flaky beat is noise, half a video is the gate being off."""
+    attempted, unjudged = stats.get("attempted", 0), stats.get("unjudged", 0)
+    if attempted and unjudged * 2 >= attempted:
+        from ..ops.alerting import alert  # lazy: keep ops off this module's import path
+
+        alert(
+            f"archival beat-match went blind on video {video_id}: judged only "
+            f"{attempted - unjudged}/{attempted} beat(s) — the rest kept an un-vetted photograph"
+        )
 
 
 def _fetch_stock(keywords: list[str], text: str = "") -> tuple[str, str] | None:
@@ -517,6 +547,7 @@ def acquire(
     beat_seconds = _estimate_beat_seconds(video_id, shot_list)
     anchor = _archival_anchor(video_id)  # tên sự kiện neo mọi query Commons của video này
     era = _event_era(video_id)  # pins generated stills to the decade the story happens in
+    gate_stats: dict = {}       # how often the beat-match gate could actually judge, for the alarm below
     log.info("video %s: archival anchor=%r era=%r", video_id, anchor, era or "unknown")
     archival_used: set[str] = set()  # ảnh đã lấy — beat sau chọn ảnh kế tiếp, không đụng hàng
 
@@ -553,7 +584,7 @@ def acquire(
             # map/diagram beats go straight to generation.
             record = None
             if not is_map:
-                best = _fetch_archival(keywords, text, anchor, archival_used, video_id, era)
+                best = _fetch_archival(keywords, text, anchor, archival_used, video_id, era, gate_stats)
                 if best is None:
                     log.info("beat %s: archival MISS (no qualifying Commons candidate)", beat_id)
                 else:
@@ -613,6 +644,7 @@ def acquire(
     if pending:
         saved.extend(_flush_generated_batch(video_id, pending, era))
 
+    _alert_if_gate_went_blind(video_id, gate_stats)
     _log_motion_ratio(video_id, motion_beats, total_beats)
     checkpoint.write(video_id, STEP, {"count": len(saved), "motion_beats": motion_beats})
     return saved

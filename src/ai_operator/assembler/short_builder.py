@@ -157,18 +157,25 @@ def beat_targets(narration: str, beats: list[dict], narration_dur: float) -> lis
         return None
     total = len(narration)
     per = narration_dur / len(beats)
-    targets, found, cursor = [], 0, 0
+    targets, found, cursor, floor = [], 0, 0, 0.0
     for i, beat in enumerate(beats[1:], start=1):  # beat 0 always starts at 0.0
         span = (beat.get("narration_span") or "").strip()
         # Search forward only: the same sentence can repeat, and a beat never illustrates
         # narration that an earlier beat already passed.
         at = narration.find(span, cursor) if span else -1
         if at < 0:
-            targets.append(i * per)
-            continue
-        cursor = at + len(span)
-        found += 1
-        targets.append(at / total * narration_dur)
+            target = i * per
+        else:
+            cursor = at + len(span)
+            found += 1
+            target = at / total * narration_dur
+        # Mixing found spans with even-split stand-ins can hand back a boundary EARLIER than the
+        # one before it -- a beat whose span was paraphrased takes its even-split slot while the
+        # next beat's real span sits further back in the text. Boundaries must only move forward;
+        # the caller can enforce a minimum length but cannot undo an inversion.
+        target = max(target, floor)
+        floor = target
+        targets.append(target)
     return targets if found else None
 
 
@@ -191,8 +198,9 @@ def _beat_durations(
             if abs(e - target) <= _SNAP_TOLERANCE_S
             and prev + _MIN_BEAT_S <= e <= narration_dur - _MIN_BEAT_S
         ]
-        # fallback keeps monotonicity even for degenerate grids (per-beat < tolerance)
-        bounds.append(min(cands, key=lambda e: abs(e - target)) if cands else max(target, prev + 0.1))
+        # No caption end near the target: keep the boundary moving forward, but by a real beat
+        # rather than 0.1s. Two frames of an image is a flicker, not a shot.
+        bounds.append(min(cands, key=lambda e: abs(e - target)) if cands else max(target, prev + _MIN_BEAT_S))
         prev = bounds[-1]
     return [b - a for a, b in zip([0.0, *bounds], [*bounds, narration_dur])]
 

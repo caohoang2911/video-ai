@@ -46,7 +46,12 @@ def assemble_video(video_id: int) -> dict:
 
     if final_path.exists() and (is_done(video_id, STEP) or state == VideoState.RENDERED.value):
         log.info("video %s: assemble already done -> reusing %s", video_id, final_path)
-        return {"video_path": str(final_path), "duration_sec": duration_sec or 0}
+        # `skipped` lets the caller tell "rendered" from "nothing happened". The job worker
+        # used to follow every assemble with a thumbnail pass, so pressing the button on an
+        # already-rendered video re-rendered nothing, spent ~$0.09 of fal, and overwrote
+        # thumb_a/b/c with no backup -- while the CLI `thumbs` command backs them up by
+        # default. A no-op that costs money and destroys work is not a no-op.
+        return {"video_path": str(final_path), "duration_sec": duration_sec or 0, "skipped": True}
     if state not in (VideoState.VOICED.value, VideoState.RENDERED.value):
         raise InvalidTransition(
             f"video {video_id} state={state}, expected {VideoState.VOICED.value} or {VideoState.RENDERED.value}"

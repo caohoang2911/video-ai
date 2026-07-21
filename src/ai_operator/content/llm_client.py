@@ -49,11 +49,22 @@ _RELEVANCE_PROMPT = (
 )
 # The beat-level question. Commons is full of museum catalogue photography, so an image can
 # belong to the right event and still show nothing the narrator is talking about.
+#
+# The exclusions are not decoration. Measured: a scale model of MS Estonia in its display case
+# and a modern bronze marker at the St Francis dam site BOTH score 1.0 against their own beat
+# text under a bare "does this show what the narrator describes" -- correctly, by the letter of
+# that question, since a model of the ferry does show the ferry. Both files reached finished
+# videos. Raising the floor cannot fix it: the scale is near-binary, so a higher threshold kills
+# real photographs and leaves the 1.0 souvenirs. The QUESTION has to exclude them, not the
+# number. Matches the exclusions the thumbnail gate already measured at 13/13.
 _SCENE_MATCH_PROMPT = (
     'A documentary narrator says: "{narration}"\n'
     "Does this image show what the narrator is describing? Answer with a single number from "
     "0.0 to 1.0 (1.0 = it shows this scene or its subject, 0.0 = it shows something else "
-    "entirely). Number only, no words."
+    "entirely). Score 0.0 for anything that only stands IN FOR the subject rather than being "
+    "it: a scale model or museum exhibit, a memorial, plaque, marker or sign, a map or diagram, "
+    "a drawing, painting or AI-generated image, or a present-day photograph of the location. "
+    "Number only, no words."
 )
 # Adaptive thinking tokens count against max_tokens (it is the ceiling on thinking + text
 # combined). A tight ceiling lets a long thinking pass consume the whole budget and return
@@ -69,6 +80,10 @@ def _effective_max_tokens(requested: int) -> int:
 
 class LLMError(Exception):
     """Raised when no LLM provider is configured or all providers fail."""
+
+
+# (step, serving provider, first failure) already alerted on in this process -- see _alert_degraded.
+_DEGRADED_ALERTED: set[tuple[str, str, str]] = set()
 
 
 def complete(
@@ -92,17 +107,48 @@ def complete(
     Only the FIRST-choice provider bills the plain step name; a stand-in bills
     `{step}_{provider}_fallback`, so the ledger answers "did the good provider actually serve
     this?" months later. A run where every Claude call silently degraded once cost two days of
-    debugging precisely because nothing durable recorded the degradation."""
+    debugging precisely because nothing durable recorded the degradation.
+
+    Durable is not the same as noticed. A whole day of scripts was once written by the last-resort
+    model because the paid key was out of credit and the gateway was refusing connections, and the
+    ledger recorded every bit of it while nobody looked. A degraded THINKING step now also pushes
+    an operator alert -- once per (step, provider, reason) per process, because the point is to
+    learn that the good provider is down, not to receive one message per beat."""
+    failures: list[str] = []
     for rank, provider in enumerate(_provider_chain(thinking)):
         try:
-            return _PROVIDERS[provider](
+            text = _PROVIDERS[provider](
                 system, user, max_tokens=max_tokens,
                 step=step if rank == 0 else f"{step}_{provider}_fallback",
                 video_id=video_id,
             )
         except Exception as exc:  # noqa: BLE001 - any provider error should trigger fallback, not crash the run
             log.warning("%s call failed (%s) — trying next provider", provider, exc)
+            failures.append(f"{provider}: {str(exc)[:120]}")
+            continue
+        if rank and thinking:
+            _alert_degraded(step, provider, failures)
+        return text
     raise LLMError("No LLM provider succeeded: set ANTHROPIC_API_KEY, LLM_GATEWAY_URL or GEMINI_API_KEY")
+
+
+def _alert_degraded(step: str, served_by: str, failures: list[str]) -> None:
+    """Tell the operator that a reasoning-dependent step fell to a stand-in, and why.
+
+    Deduped per process: one wedged provider would otherwise fire an alert for every beat of
+    every video until someone restarts, and an alert channel that cries every minute is one
+    nobody reads."""
+    key = (step, served_by, failures[0] if failures else "")
+    if key in _DEGRADED_ALERTED:
+        return
+    _DEGRADED_ALERTED.add(key)
+    from ..ops.alerting import alert  # lazy: keep ops off this module's import path
+
+    alert(
+        f"LLM degraded: '{step}' was written by {served_by} because the preferred provider(s) "
+        f"failed — {'; '.join(failures)}. Reasoning-dependent output is running on a stand-in "
+        f"until this is fixed."
+    )
 
 
 def _provider_chain(thinking: bool) -> list[str]:
@@ -219,7 +265,7 @@ def _complete_gemini(system: str, user: str, *, max_tokens: int, step: str, vide
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=settings.GEMINI_TEXT_MODEL,
             contents=user,
             config=types.GenerateContentConfig(
                 system_instruction=system,

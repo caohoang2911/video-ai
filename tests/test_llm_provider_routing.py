@@ -106,3 +106,60 @@ def test_first_choice_provider_bills_the_plain_step(cfg, monkeypatch):
     complete("sys", "user", step="research_gate", thinking=True)
 
     assert steps == ["research_gate"]  # not "..._anthropic_fallback"
+
+
+def test_a_degraded_thinking_step_reaches_the_operator(cfg, monkeypatch):
+    """A whole day of scripts was once written by the last-resort model because the paid key was
+    out of credit and the gateway refused connections. The ledger recorded every bit of it and
+    nobody looked, so the degradation now pushes an alert as well."""
+    cfg(anthropic="sk-a", gateway="http://localhost/v1", gemini="g")
+    llm_client._DEGRADED_ALERTED.clear()
+    import ai_operator.ops.alerting as alerting
+
+    alerts: list[str] = []
+    monkeypatch.setattr(alerting, "alert", lambda msg: alerts.append(msg))
+    monkeypatch.setitem(llm_client._PROVIDERS, "anthropic",
+                        lambda s, u, **kw: (_ for _ in ()).throw(RuntimeError("credit balance is too low")))
+    monkeypatch.setitem(llm_client._PROVIDERS, "gateway", lambda s, u, **kw: "text")
+
+    complete("sys", "user", step="script_generate", thinking=True)
+
+    assert len(alerts) == 1
+    assert "gateway" in alerts[0] and "credit balance is too low" in alerts[0]
+
+
+def test_the_degradation_alert_does_not_repeat_all_run(cfg, monkeypatch):
+    """One wedged provider would otherwise fire per beat until someone restarts, and a channel
+    that cries every minute is one nobody reads."""
+    cfg(anthropic="sk-a", gateway="http://localhost/v1", gemini="g")
+    llm_client._DEGRADED_ALERTED.clear()
+    import ai_operator.ops.alerting as alerting
+
+    alerts: list[str] = []
+    monkeypatch.setattr(alerting, "alert", lambda msg: alerts.append(msg))
+    monkeypatch.setitem(llm_client._PROVIDERS, "anthropic",
+                        lambda s, u, **kw: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setitem(llm_client._PROVIDERS, "gateway", lambda s, u, **kw: "text")
+
+    for _ in range(5):
+        complete("sys", "user", step="script_generate", thinking=True)
+
+    assert len(alerts) == 1
+
+
+def test_a_cheap_step_falling_back_stays_quiet(cfg, monkeypatch):
+    """Only reasoning-dependent output is worth waking someone for; the ledger already records
+    the rest."""
+    cfg(gateway="http://localhost/v1", gemini="g")
+    llm_client._DEGRADED_ALERTED.clear()
+    import ai_operator.ops.alerting as alerting
+
+    alerts: list[str] = []
+    monkeypatch.setattr(alerting, "alert", lambda msg: alerts.append(msg))
+    monkeypatch.setitem(llm_client._PROVIDERS, "gateway",
+                        lambda s, u, **kw: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setitem(llm_client._PROVIDERS, "gemini", lambda s, u, **kw: "text")
+
+    complete("sys", "user", step="srt_translate", thinking=False)
+
+    assert alerts == []

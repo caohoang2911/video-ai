@@ -83,3 +83,30 @@ def test_durations_still_sum_and_stay_monotonic_with_targets():
     assert len(durations) == 4
     assert abs(sum(durations) - 60.0) < 1e-6
     assert all(d > 0 for d in durations)
+
+
+def test_boundaries_only_ever_move_forward():
+    """A beat whose span was paraphrased takes its even-split slot; if the NEXT beat's real span
+    sits further back in the text, the raw boundary would go backwards and the renderer would be
+    handed an inverted grid."""
+    narration = "A. " + "x" * 400 + " The ice gave back one word. Later still, silence."
+    beats = [
+        {"keywords": ["a"], "mood": "m", "narration_span": "A."},
+        {"keywords": ["b"], "mood": "m", "narration_span": "not in the narration at all"},
+        {"keywords": ["c"], "mood": "m", "narration_span": "The ice gave back one word."},
+        {"keywords": ["d"], "mood": "m", "narration_span": "Later still, silence."},
+    ]
+
+    targets = beat_targets(narration, beats, 60.0)
+
+    assert targets == sorted(targets)
+
+
+def test_a_degenerate_grid_still_gives_each_beat_a_real_shot():
+    """Two frames of an image is a flicker, not a shot: the no-caption-nearby fallback advances
+    by a whole minimum beat rather than 0.1s."""
+    from ai_operator.assembler.short_builder import _MIN_BEAT_S
+
+    durations = _beat_durations(10.0, 4, caps=[], targets=[0.0, 0.0, 0.0])
+
+    assert all(d >= _MIN_BEAT_S - 1e-6 for d in durations[:-1]), durations

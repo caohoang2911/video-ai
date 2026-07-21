@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # went unjudged (= kept, gate silently off). The flash-lite line sustains a whole pool in
     # one burst and answers this yes/no-with-a-number question just as well.
     GEMINI_VISION_MODEL: str = "gemini-3.1-flash-lite"
+    # Model for the last-resort TEXT fallback. Separate from the vision one because the two
+    # are chosen on different grounds: vision needs free-tier request headroom, text needs
+    # prose quality. It only runs when both preferred providers are down -- which is exactly
+    # when nobody is watching, so it should not be a name buried in a call site.
+    GEMINI_TEXT_MODEL: str = "gemini-2.5-flash"
     # Minimum agreement (0..1) between an archival photo and the line the narrator speaks over
     # it. CLIP re-ranking only ORDERS Commons candidates; without a floor the top of an
     # entirely off-beat pool still won, and Commons' museum catalogue photography meant beats
