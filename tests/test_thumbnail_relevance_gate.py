@@ -173,7 +173,8 @@ def test_rank_relevance_first(monkeypatch):
 
 def test_gated_pools_gates_others_only_when_archival_empty(monkeypatch):
     monkeypatch.setattr(tg, "_subject_text", lambda vid: "Titanic")
-    monkeypatch.setattr(tg, "_rank_relevance_first", lambda scored: [p for p, _ in scored])
+    monkeypatch.setattr(tg, "_period_photos", lambda vid: set())  # licence lookup needs no DB here
+    monkeypatch.setattr(tg, "_rank_relevance_first", lambda scored, period=None: [p for p, _ in scored])
 
     gate_calls: list[list[str]] = []
 
@@ -214,9 +215,10 @@ def test_gated_pools_bounds_how_many_others_reach_the_gate(monkeypatch):
     # image, so gating it whole outruns the request quota to judge frames that could never win
     # a variant slot. Frame-score picks the shortlist; the gate still judges every survivor.
     monkeypatch.setattr(tg, "_subject_text", lambda vid: "Titanic")
+    monkeypatch.setattr(tg, "_period_photos", lambda vid: set())  # licence lookup needs no DB here
     monkeypatch.setattr(tg, "_caption_free_sources",
                         lambda vid: ([], [Path(f"o{i}.jpg") for i in range(40)]))
-    monkeypatch.setattr(tg, "_rank_relevance_first", lambda scored: [p for p, _ in scored])
+    monkeypatch.setattr(tg, "_rank_relevance_first", lambda scored, period=None: [p for p, _ in scored])
 
     gated: list[int] = []
 
@@ -251,3 +253,50 @@ def test_gated_pools_bounds_how_many_others_reach_the_gate(monkeypatch):
 )
 def test_parse_unit_score(text, expected):
     assert lc._parse_unit_score(text) == expected
+
+
+# --------------------------------------------------------------------------------------
+# period-photo tie-break -- aesthetic punch is the wrong judge of a HERO
+# --------------------------------------------------------------------------------------
+
+
+def test_period_photograph_wins_a_relevance_tie(monkeypatch):
+    """Asked whether they show the dam failure, the 1928 photo of the broken dam and a 2012
+    snapshot of the empty site both score 1.0. Frame-score handed the slot to the colour photo
+    -- more punch, none of the thing a viewer must recognise."""
+    modern, era = Path("2012_site.jpg"), Path("1928_ruin.jpg")
+    monkeypatch.setattr(tg.thumbnail_frame_score, "usable", lambda p: True)
+    # frame-score prefers the modern colour frame; the tie-break must overrule it
+    monkeypatch.setattr(tg.thumbnail_frame_score, "rank", lambda paths, n: [modern, era])
+
+    assert tg._rank_relevance_first([(modern, 1.0), (era, 1.0)], {era})[0] == era
+
+
+def test_period_preference_never_outranks_relevance(monkeypatch):
+    """A period photo of the wrong thing must not climb over a modern photo of the right one."""
+    era_offevent, modern_onevent = Path("old.jpg"), Path("new.jpg")
+    monkeypatch.setattr(tg.thumbnail_frame_score, "usable", lambda p: True)
+    monkeypatch.setattr(tg.thumbnail_frame_score, "rank", lambda paths, n: list(paths))
+
+    ranked = tg._rank_relevance_first([(era_offevent, 0.5), (modern_onevent, 1.0)], {era_offevent})
+
+    assert ranked[0] == modern_onevent  # different bands -> relevance still decides
+
+
+def test_recent_event_with_no_period_photos_keeps_frame_score_order(monkeypatch):
+    a, b = Path("a.jpg"), Path("b.jpg")
+    monkeypatch.setattr(tg.thumbnail_frame_score, "usable", lambda p: True)
+    monkeypatch.setattr(tg.thumbnail_frame_score, "rank", lambda paths, n: [a, b])
+
+    assert tg._rank_relevance_first([(a, 1.0), (b, 1.0)], set()) == [a, b]
+
+
+@pytest.mark.parametrize("licence,expected", [
+    ("Public domain | Stearns, H.T. USGS | https://c/1", True),
+    ("PD-US | Lib of Congress | https://c/2", True),
+    ("CC BY-SA 2.0 | Konrad Summers | https://c/3", False),
+    ("CC BY 4.0 | Jane Doe | https://c/4", False),
+    (None, False),
+])
+def test_public_domain_licence_detection(licence, expected):
+    assert tg._is_public_domain(licence) is expected

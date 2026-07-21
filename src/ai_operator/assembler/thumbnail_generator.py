@@ -245,17 +245,28 @@ def _relevance_gate(
     return kept
 
 
-def _rank_relevance_first(scored: list[tuple[Path, float | None]]) -> list[Path]:
+def _rank_relevance_first(
+    scored: list[tuple[Path, float | None]], period: set[Path] | None = None
+) -> list[Path]:
     """Order gate-passers by event-relevance first; within a relevance band (`_RELEVANCE_TIE_EPS`)
-    delegate to `thumbnail_frame_score.rank`, which orders by aesthetic punch AND drops
-    near-duplicate frames — so two crops of one photo never take two A/B slots. Unscored images
-    (fail-open) all share one band -> pure frame-score order + dedup, the prior behaviour.
+    prefer a PERIOD photograph, then fall back to `thumbnail_frame_score.rank`, which orders by
+    aesthetic punch AND drops near-duplicate frames — so two crops of one photo never take two
+    A/B slots. Unscored images (fail-open) all share one band.
+
+    The period preference exists because aesthetic punch is the wrong judge of a HERO. Asked
+    whether they show the St. Francis dam failure, the 1928 photograph of the broken dam and a
+    2012 hillside snapshot of the empty site both score 1.0 — a genuine tie the gate cannot
+    break. Frame-score then handed the slot to the colour photo, because a green hillside has
+    more punch than a grey ruin, and the thumbnail lost the one thing a viewer must recognise.
+    A tie is broken toward the era; it never outranks relevance, and where an event is recent
+    enough that no candidate is a period photograph the order is unchanged.
 
     Frames unfit to face a video at all are dropped BEFORE banding. Ranking inside a band cannot
     do it: a band holding exactly as many candidates as there are variants gives each one a slot
     no matter how badly it scores, which is how scans of 1917 newsprint reached the A/B set."""
     fit = [(p, rel) for p, rel in scored if thumbnail_frame_score.usable(p)]
     scored = fit or scored  # everything unfit -> keep the field rather than return nothing
+    period = period or set()
 
     bands: dict[int, list[Path]] = {}
     for path, rel in scored:
@@ -263,8 +274,32 @@ def _rank_relevance_first(scored: list[tuple[Path, float | None]]) -> list[Path]
         bands.setdefault(band, []).append(path)
     ranked: list[Path] = []
     for band in sorted(bands, reverse=True):  # highest relevance first
-        ranked.extend(thumbnail_frame_score.rank(bands[band], N_VARIANTS))
+        picks = thumbnail_frame_score.rank(bands[band], N_VARIANTS)
+        picks.sort(key=lambda p: p not in period)  # stable: period first, frame-score order kept
+        ranked.extend(picks)
     return ranked[:N_VARIANTS]
+
+
+def _period_photos(video_id: int) -> set[Path]:
+    """Archival paths whose licence marks them as a photograph OF the era, not of the site today.
+
+    Commons states a licence per file and public domain is the fingerprint of an old photograph:
+    a pre-1930 press or survey plate has lapsed into PD, while a visitor's modern snapshot of the
+    same location is uploaded under CC BY-SA in the photographer's own name. It is a proxy, not a
+    guarantee — which is why it only breaks ties. For an event recent enough that its real
+    photographs are themselves CC-licensed the set comes back empty and nothing changes."""
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(Asset).where(Asset.video_id == video_id, Asset.kind == "archival")
+        ).scalars().all()
+    return {Path(r.url_or_path) for r in rows if _is_public_domain(r.license)}
+
+
+def _is_public_domain(license_text: str | None) -> bool:
+    """Whether a Commons licence string denotes public domain (vs a CC grant by a named author).
+    The stored form is `licence | author | file page`, so only the leading field is examined."""
+    short = (license_text or "").split("|")[0].strip().lower()
+    return short.startswith("public domain") or short.startswith("pd")
 
 
 def _gated_pools(video_id: int) -> tuple[list[Path], list[Path], str]:
@@ -277,7 +312,9 @@ def _gated_pools(video_id: int) -> tuple[list[Path], list[Path], str]:
     common path; `expect_scores=False` there because video-broll can't be image-scored."""
     subject = _subject_text(video_id)
     archival, others = _caption_free_sources(video_id)
-    archival_ranked = _rank_relevance_first(_relevance_gate(archival, subject, video_id))
+    archival_ranked = _rank_relevance_first(
+        _relevance_gate(archival, subject, video_id), _period_photos(video_id)
+    )
     if archival_ranked:
         others_ranked = thumbnail_frame_score.rank(others, N_VARIANTS)
     else:
