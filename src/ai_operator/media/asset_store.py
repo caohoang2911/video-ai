@@ -1,8 +1,15 @@
-"""Persisted media assets -- md5 dedup, AI watermark for generated images, DB rows for audit.
+"""Persisted media assets -- md5 dedup, DB rows for audit.
 
-Every acquired image must be traceable to a license before the publish phase's upload; a
+Every acquired image must be traceable to a license before the publish phase's upload, and a
 duplicate check by content hash stops Pexels/Pixabay returning the same stock photo twice
-across beats, and generated images get an "AI-Generated" watermark burned in for transparency.
+across beats.
+
+Generated stills carry no burned-in "AI-Generated" badge. The row already says what they are
+(`kind="gen"` plus an AI-generated license string), which is the answer to "which of these did
+a model draw" -- queryable, exact, and visible in the control panel, where a badge in the
+corner of a JPEG was none of those. Viewer-facing disclosure is the publisher's job:
+`containsSyntheticMedia` drives YouTube's own label and the description carries the disclosure
+block. YouTube never asked for a badge in the frame.
 """
 
 from __future__ import annotations
@@ -13,7 +20,7 @@ from io import BytesIO
 from pathlib import Path
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from sqlalchemy import select
 
 from ..config import OUTPUT_DIR
@@ -35,7 +42,6 @@ _VIDEO_LICENSES = {
     "pexels": "Pexels License (free, no attribution required)",
     "pixabay": "Pixabay Content License / CC0 (free, no attribution required)",
 }
-_WATERMARK_TEXT = "AI-Generated"
 _VIDEO_DOWNLOAD_TIMEOUT_SEC = 30  # b-roll clips are larger than photos; allow a longer pull
 
 
@@ -188,9 +194,11 @@ def save_video_broll(video_id: int, beat_id: int, url: str, source: str, index: 
 
 
 def save_generated(video_id: int, beat_id: int, image_path: Path, source: str) -> dict | None:
-    """Watermark + dedup an AI-generated image and move it into the video's img dir."""
+    """Dedup an AI-generated image and move it into the video's img dir.
+
+    Re-encoded rather than copied so the md5 dedup key is the hash of the bytes actually
+    stored, matching every other save_* path."""
     image = Image.open(image_path).convert("RGB")
-    _watermark(image)
 
     buf = BytesIO()
     image.save(buf, format="JPEG", quality=92)
@@ -228,19 +236,6 @@ def _gradient_card(size: tuple[int, int] = (1920, 1080),
         t = y / h
         col.putpixel((0, y), tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)))
     return col.resize(size)
-
-
-def _watermark(image: Image.Image) -> None:
-    """Burn a small 'AI-Generated' label into the bottom-right corner (transparency/compliance)."""
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()
-    w, h = image.size
-    margin = 10
-    bbox = draw.textbbox((0, 0), _WATERMARK_TEXT, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    x, y = w - tw - margin * 2, h - th - margin * 2
-    draw.rectangle([x - 4, y - 4, x + tw + 4, y + th + 4], fill=(0, 0, 0))
-    draw.text((x, y), _WATERMARK_TEXT, fill="white", font=font)
 
 
 def _write_row(video_id: int, *, kind: str, source: str, path: Path, license_: str, md5: str) -> dict:
