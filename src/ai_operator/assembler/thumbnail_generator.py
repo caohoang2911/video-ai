@@ -223,19 +223,25 @@ def _relevance_gate(
         _gate_disabled_alert(video_id, "no relevance backend configured")
         return [(p, None) for p in paths]
     kept: list[tuple[Path, float | None]] = []
-    scored_any = False
+    unjudged = 0
     for p in paths:
         s = relevance_scorer.score(subject, p, video_id=video_id)
         if s is None:  # unreadable / model hiccup -> keep, don't punish on a failed measure
             kept.append((p, None))
+            unjudged += 1
             continue
-        scored_any = True
         log.info("thumb relevance %.3f (min %.2f) subject=%r img=%s",
                  s, settings.THUMB_RELEVANCE_MIN, subject, p.name)
         if s >= settings.THUMB_RELEVANCE_MIN:
             kept.append((p, s))
-    if expect_scores and not scored_any:  # backend present but judged nothing -> broken / quota'd
-        _gate_disabled_alert(video_id, "relevance backend returned no usable score")
+    # Partial blindness is the failure that actually happens: a per-minute request quota lets
+    # the first images through and rejects the rest, so the pool comes back mostly unjudged
+    # while `scored_any` still looks healthy. Alert once half the pool went unjudged — a lone
+    # unreadable file is noise, half a pool passing ungated is the gate being off.
+    if expect_scores and unjudged * 2 >= len(paths):
+        _gate_disabled_alert(
+            video_id, f"relevance backend judged only {len(paths) - unjudged}/{len(paths)} candidates"
+        )
     return kept
 
 
@@ -275,8 +281,13 @@ def _gated_pools(video_id: int) -> tuple[list[Path], list[Path], str]:
     if archival_ranked:
         others_ranked = thumbnail_frame_score.rank(others, N_VARIANTS)
     else:
+        # Frame-score FIRST here, then gate: the `others` pool runs to dozens of stock frames and
+        # gating it whole would spend dozens of vision calls (and outrun the request quota) to
+        # judge frames that could never reach a variant slot anyway.
         others_ranked = _rank_relevance_first(
-            _relevance_gate(others, subject, video_id, expect_scores=False)
+            _relevance_gate(
+                thumbnail_frame_score.rank(others, N_VARIANTS * 2), subject, video_id, expect_scores=False
+            )
         )
     return archival_ranked, others_ranked, subject
 

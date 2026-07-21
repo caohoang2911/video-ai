@@ -40,8 +40,11 @@
       Set `IMAGE_GEN_BACKEND=sdxl` for a free, fully-offline render using local SDXL first)_. The same key
       powers the **thumbnail hero** (FLUX Kontext relight of the primary archival photo, ~$0.04/video —
       toggle off with `THUMBNAIL_KONTEXT_ENHANCE=false`). `THUMB_RELEVANCE_MIN` (default 0.5, Gemini vision
-      score 0..1) gates archival photo relevance; Gemini must confirm the image depicts the event subject,
-      else the gate raises an ops alert and falls back to synthetic hero. Requires `GEMINI_API_KEY`.
+      score 0..1) gates archival photo relevance; Gemini must confirm the image shows the event itself —
+      not a memorial, plaque, museum model or illustration of it — else the hero falls back to synthetic.
+      Requires `GEMINI_API_KEY`. `GEMINI_VISION_MODEL` (default `gemini-3.1-flash-lite`) is picked for
+      free-tier request quota: the gate fires one call per candidate, and `gemini-2.5-flash`'s 5 req/min
+      free limit left most images unjudged. If the backend can't judge half a pool, ops gets an alert.
 - [ ] **TELEGRAM_BOT_TOKEN** (from @BotFather `/newbot`) + **TELEGRAM_CHAT_ID** (run `operator get-chat-id`).
 
 ## Budget / infra

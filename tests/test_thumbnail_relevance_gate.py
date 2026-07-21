@@ -92,7 +92,38 @@ def test_relevance_gate_fails_loud_when_backend_returns_no_score(monkeypatch):
     kept = tg._relevance_gate([Path("a.jpg"), Path("b.jpg")], "Titanic", 9)
 
     assert [p for p, _ in kept] == [Path("a.jpg"), Path("b.jpg")]  # all kept (best-effort)
-    assert len(alerts) == 1 and "no usable score" in alerts[0]  # broken backend is NOT silent
+    assert len(alerts) == 1 and "0/2" in alerts[0]  # broken backend is NOT silent
+
+
+def test_relevance_gate_fails_loud_when_half_the_pool_goes_unjudged(monkeypatch):
+    # A per-minute request quota lets the first images through and rejects the rest: some
+    # scores come back, so "did anything score?" looks healthy while most images pass ungated.
+    monkeypatch.setattr(tg.relevance_scorer, "available", lambda: True)
+    scores = {"a.jpg": 0.9, "b.jpg": 0.9, "c.jpg": None, "d.jpg": None}
+    monkeypatch.setattr(tg.relevance_scorer, "score", lambda subj, p, video_id=None: scores[p.name])
+    import ai_operator.ops.alerting as alerting
+
+    alerts: list[str] = []
+    monkeypatch.setattr(alerting, "alert", lambda msg: alerts.append(msg))
+
+    tg._relevance_gate([Path(n) for n in scores], "Titanic", 9)
+
+    assert len(alerts) == 1 and "2/4" in alerts[0]
+
+
+def test_relevance_gate_tolerates_a_single_unreadable_image(monkeypatch):
+    # One bad file among many is noise, not a disabled gate — it must not cry wolf.
+    monkeypatch.setattr(tg.relevance_scorer, "available", lambda: True)
+    scores = {"a.jpg": 0.9, "b.jpg": 0.9, "c.jpg": 0.9, "bad.jpg": None}
+    monkeypatch.setattr(tg.relevance_scorer, "score", lambda subj, p, video_id=None: scores[p.name])
+    import ai_operator.ops.alerting as alerting
+
+    alerts: list[str] = []
+    monkeypatch.setattr(alerting, "alert", lambda msg: alerts.append(msg))
+
+    tg._relevance_gate([Path(n) for n in scores], "Titanic", 9)
+
+    assert alerts == []
 
 
 def test_relevance_gate_no_false_alarm_for_unscorable_others(monkeypatch):
@@ -175,7 +206,29 @@ def test_gated_pools_gates_others_only_when_archival_empty(monkeypatch):
     rank_calls.clear()
     tg._gated_pools(2)
     assert gate_calls == [[], ["oth.jpg"]]  # archival (empty) then others gated
-    assert rank_calls == []  # others NOT frame-scored — gated instead
+    assert rank_calls == [["oth.jpg"]]  # frame-score only PRE-selects; nothing skips the gate
+
+
+def test_gated_pools_bounds_how_many_others_reach_the_gate(monkeypatch):
+    # The `others` pool runs to dozens of stock frames and the gate spends one vision call per
+    # image, so gating it whole outruns the request quota to judge frames that could never win
+    # a variant slot. Frame-score picks the shortlist; the gate still judges every survivor.
+    monkeypatch.setattr(tg, "_subject_text", lambda vid: "Titanic")
+    monkeypatch.setattr(tg, "_caption_free_sources",
+                        lambda vid: ([], [Path(f"o{i}.jpg") for i in range(40)]))
+    monkeypatch.setattr(tg, "_rank_relevance_first", lambda scored: [p for p, _ in scored])
+
+    gated: list[int] = []
+
+    def fake_gate(paths, subject, video_id, expect_scores=True):
+        gated.append(len(paths))
+        return [(p, 0.9) for p in paths]
+
+    monkeypatch.setattr(tg, "_relevance_gate", fake_gate)
+
+    tg._gated_pools(3)
+
+    assert gated[-1] <= tg.N_VARIANTS * 2
 
 
 # --------------------------------------------------------------------------------------

@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     # configured the gate can't judge and passes images through, but raises a loud operator
     # alert so the disabled check is never silent.
     THUMB_RELEVANCE_MIN: float = 0.5
+    # Gemini model backing that gate. It is picked for FREE-TIER REQUEST QUOTA before quality:
+    # the gate fires one call per candidate image back-to-back, and gemini-2.5-flash's free
+    # tier allows only 5 requests/minute, so a normal 6-image pool outran it and most images
+    # went unjudged (= kept, gate silently off). The flash-lite line sustains a whole pool in
+    # one burst and answers this yes/no-with-a-number question just as well.
+    GEMINI_VISION_MODEL: str = "gemini-3.1-flash-lite"
     # Enhance the primary thumbnail hero (real archival) through FLUX Kontext — subject-
     # preserving relight+grade, ~$0.04/video. Off => PIL grade only (no fal call).
     THUMBNAIL_KONTEXT_ENHANCE: bool = True

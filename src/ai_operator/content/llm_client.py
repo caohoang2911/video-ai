@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from ..config import settings
 from ..constants import DEFAULT_ANTHROPIC_MODEL
@@ -25,6 +26,23 @@ _GEMINI_FLAT_ESTIMATE_USD = 0.05  # Gemini has no per-token price in constants.p
 # a script call, and free on the Gemini free tier. Reserve a tiny flat amount so a burst of
 # per-image scores can't drain the cap, then record it as the actual (no usage price exists).
 _GEMINI_VISION_FLAT_ESTIMATE_USD = 0.002
+# The gate scores one image per call back-to-back, which is exactly the shape a per-minute
+# request quota punishes. A quota rejection returns None and the image is KEPT UNJUDGED, so
+# a burst that outruns the quota silently disables the gate — retry those once after a pause
+# instead. Only quota errors are retried; a bad key or an unreadable image fails immediately.
+_VISION_QUOTA_RETRY_SLEEP_S = 20
+_QUOTA_ERROR_MARKERS = ("429", "RESOURCE_EXHAUSTED", "quota")
+# "Depicts the subject" is not the same question as "is a real depiction of the subject": a
+# museum scale model in its display case, a modern memorial plaque, and a photo of the site
+# as it looks today all depict their event faithfully and all make a terrible video face.
+# Naming those exclusions is what separates a 1.0 archive photo from a 1.0 souvenir.
+_RELEVANCE_PROMPT = (
+    'Does this image show "{subject}" ITSELF — the event, the vessel, or the site as it was? '
+    "Answer with a single number from 0.0 to 1.0 (1.0 = a real depiction of it, 0.0 = "
+    "unrelated). Score 0.0 for anything that only REFERS to it rather than showing it: a "
+    "modern memorial, plaque, sign, museum display or scale model, map, or a modern photo of "
+    "the location today. Number only, no words."
+)
 # Adaptive thinking tokens count against max_tokens (it is the ceiling on thinking + text
 # combined). A tight ceiling lets a long thinking pass consume the whole budget and return
 # a response with NO text block at all, which silently drops the call to the Gemini
@@ -232,30 +250,39 @@ def score_image_relevance(
         log.warning("Gemini relevance reserve failed (%s) -> image not judged", exc)
         return None
 
-    try:
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                (
-                    f'Does this image depict "{subject}"? Answer with a single number from 0.0 to '
-                    "1.0 (1.0 = exactly this event/subject, 0.0 = unrelated). Number only, no words."
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model=settings.GEMINI_VISION_MODEL,
+                contents=[
+                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                    _RELEVANCE_PROMPT.format(subject=subject),
+                ],
+                config=types.GenerateContentConfig(
+                    max_output_tokens=16,
+                    # No chain-of-thought needed for a one-number answer; thinking would spend the
+                    # tiny output budget and return no text (same trap as the script calls above).
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
-            ],
-            config=types.GenerateContentConfig(
-                max_output_tokens=16,
-                # No chain-of-thought needed for a one-number answer; thinking would spend the
-                # tiny output budget and return no text (same trap as the script calls above).
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001 - outage / bad key / quota -> release the reservation
-        record_actual(ledger_id, 0.0)  # nothing billed on failure (mirrors the other providers)
-        log.warning("Gemini relevance score failed (%s) -> image not judged", exc)
-        return None
-    record_actual(ledger_id, _GEMINI_VISION_FLAT_ESTIMATE_USD)
-    return _parse_unit_score(response.text)
+            )
+        except Exception as exc:  # noqa: BLE001 - outage / bad key / quota -> release the reservation
+            if attempt == 0 and _is_quota_error(exc):
+                log.warning("Gemini relevance score hit a quota wall (%s) -> retrying once", exc)
+                time.sleep(_VISION_QUOTA_RETRY_SLEEP_S)
+                continue
+            record_actual(ledger_id, 0.0)  # nothing billed on failure (mirrors the other providers)
+            log.warning("Gemini relevance score failed (%s) -> image not judged", exc)
+            return None
+        record_actual(ledger_id, _GEMINI_VISION_FLAT_ESTIMATE_USD)
+        return _parse_unit_score(response.text)
+    return None  # unreachable: the loop either returns or falls into the terminal-failure branch
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """Whether the failure is a rate/quota rejection worth waiting out (vs a permanent error)."""
+    text = str(exc)
+    return any(marker in text for marker in _QUOTA_ERROR_MARKERS)
 
 
 def _parse_unit_score(text: str | None) -> float | None:
