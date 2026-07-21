@@ -89,7 +89,9 @@ def test_commons_search_filters_and_orders_candidates(monkeypatch):
     assert [c["license"] for c in out] == ["Public domain", "CC BY 4.0"]  # relevance order kept
     assert out[0]["source"] == "wikimedia"
     assert out[0]["artist"] == "Jane Doe"                    # HTML stripped
-    assert "/480px-" in out[0]["thumb"]                      # small CLIP preview derived
+    # 500 is a width Wikimedia actually renders; 480 answers 400 and silently killed every
+    # preview download, which read downstream as "this candidate has no thumbnail".
+    assert "/500px-" in out[0]["thumb"]
     assert out[0]["file_page"].startswith("https://commons.wikimedia.org/wiki/")
 
 
@@ -466,11 +468,11 @@ def test_second_candidate_saves_the_beat_when_the_top_one_is_off(beat_match):
 
 def test_only_the_top_candidates_are_judged(beat_match):
     # One vision call per candidate: a photo the ranker buried is not going to be the save.
-    beat_match({"u1": 0.0, "u2": 0.0, "u3": 1.0})
+    beat_match({"u1": 0.0, "u2": 0.0, "u3": 0.0, "u4": 1.0})
 
-    best = visual_fetcher._first_beat_relevant([_cand(u) for u in ("u1", "u2", "u3")], "text", 1)
+    best = visual_fetcher._first_beat_relevant([_cand(u) for u in ("u1", "u2", "u3", "u4")], "text", 1)
 
-    assert best is None
+    assert best is None  # u4 would have passed, but the budget ran out before reaching it
     assert len(beat_match.judged) == visual_fetcher._BEAT_MATCH_MAX_JUDGED
 
 
@@ -490,3 +492,49 @@ def test_beat_without_narration_is_not_judged(beat_match):
     best = visual_fetcher._first_beat_relevant([_cand("u1")], "", 1)
 
     assert best["url"] == "u1" and beat_match.judged == []
+
+
+def test_preview_width_is_one_wikimedia_renders():
+    """Commons serves a fixed set of widths per file and answers 400 for the rest. The preview
+    width is therefore a measured constant, not a round number someone liked."""
+    from ai_operator.media.stock_clients import _PREVIEW_WIDTH_PX
+
+    assert _PREVIEW_WIDTH_PX == 500
+
+
+def test_a_throttled_preview_is_not_a_rejection(beat_match, monkeypatch):
+    """A preview that will not download says nothing about the photograph. It used to burn a
+    judging slot anyway, so a Wikimedia throttle -- which the CLIP rerank burst right before
+    this call routinely trips -- emptied the budget and the beat reported a miss."""
+    beat_match({})  # install the fixture first; it stubs _download_thumb too
+    monkeypatch.setattr(visual_fetcher, "_download_thumb", lambda url, dest: None)
+
+    best = visual_fetcher._first_beat_relevant([_cand("u1"), _cand("u2")], "the ship detonated", 1)
+
+    assert best is not None and best["url"] == "u1"  # fail open, not a phantom miss
+    assert beat_match.judged == []                   # ...and no vision call was wasted
+
+
+def test_fail_open_never_returns_an_image_the_gate_rejected(beat_match):
+    """The whole point of the floor is that u1 does not belong on this beat. Falling back to
+    `ranked[0]` when a later candidate cannot be scored handed it straight back."""
+    beat_match({"u1": 0.2, "u2": None})
+
+    best = visual_fetcher._first_beat_relevant([_cand("u1"), _cand("u2"), _cand("u3")], "text", 1)
+
+    assert best is not None and best["url"] != "u1"
+
+
+def test_query_ladder_pins_the_year_before_the_bare_anchor():
+    """"Star Dust" alone returns nebulae and a motel sign; "Star Dust 1947" returns the aircraft."""
+    labels = [label for label, _ in visual_fetcher._archival_queries(["plane"], "Star Dust", "1947")]
+    queries = [q for _, q in visual_fetcher._archival_queries(["plane"], "Star Dust", "1947")]
+
+    assert labels == ["anchor+keywords", "anchor+era", "anchor"]
+    assert queries[1] == "Star Dust 1947"
+    assert queries[2] == "Star Dust"
+
+
+def test_query_ladder_without_a_year_is_the_old_two_rungs():
+    labels = [label for label, _ in visual_fetcher._archival_queries(["plane"], "Halifax", "")]
+    assert labels == ["anchor+keywords", "anchor"]

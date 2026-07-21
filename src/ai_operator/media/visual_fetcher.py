@@ -115,19 +115,32 @@ def _gather_candidates(query: str, pexels_fn, pixabay_fn, timeout: float) -> lis
 
 
 def _download_thumb(url: str, dest: Path) -> Path | None:
+    """A candidate's small preview, or None. Retries a throttle; gives up on anything else.
+
+    Commons thumbnails live on upload.wikimedia.org, which 429s requests without a descriptive
+    User-Agent (Wikimedia UA policy). CLIP reranking pulls MANY thumbs per beat, so a missing UA
+    here is the biggest source of archival rate-limiting -- and the beat-match gate then asks for
+    the same previews again moments later. Both sibling downloaders (`save_archival`, the Commons
+    search) already honour Retry-After; this one used to swallow the throttle into a debug line,
+    which read downstream as "no candidate" instead of "ask again in a second".
+    """
     if not url:
         return None
-    try:
-        # Commons thumbnails live on upload.wikimedia.org, which 429s requests without a
-        # descriptive User-Agent (Wikimedia UA policy). CLIP reranking pulls MANY thumbs per
-        # beat, so a missing UA here is the biggest source of archival rate-limiting.
-        r = requests.get(url, timeout=STOCK_TIMEOUT_SEC, headers={"User-Agent": stock_clients._COMMONS_UA})
-        r.raise_for_status()
-        dest.write_bytes(r.content)
-        return dest
-    except Exception as exc:  # noqa: BLE001 - a missing thumb just drops that candidate from ranking
-        log.debug("thumb download failed %s: %s", url, exc)
-        return None
+    headers = {"User-Agent": stock_clients._COMMONS_UA}
+    for attempt in range(_THUMB_RETRIES):
+        try:
+            r = requests.get(url, timeout=STOCK_TIMEOUT_SEC, headers=headers)
+            r.raise_for_status()
+            dest.write_bytes(r.content)
+            return dest
+        except Exception as exc:  # noqa: BLE001 - a missing thumb just drops that candidate from ranking
+            throttled = getattr(getattr(exc, "response", None), "status_code", None) == 429
+            if throttled and attempt < _THUMB_RETRIES - 1:
+                time.sleep(_COMMONS_PACE_SEC * (attempt + 2))
+                continue
+            log.debug("thumb download failed %s: %s", url, exc)
+            return None
+    return None
 
 
 # Rerank only the leading candidates, paced. Wikimedia's file server (upload.wikimedia.org)
@@ -140,7 +153,10 @@ _COMMONS_PACE_SEC = 1.2
 # How many CLIP-ranked candidates get a beat-match vision call before the beat gives up and
 # falls to the tiers below. Each is one metered call per beat, and a candidate the ranker
 # buried is not the one that saves the beat.
-_BEAT_MATCH_MAX_JUDGED = 2
+_BEAT_MATCH_MAX_JUDGED = 3
+# Wikimedia throttles preview bursts; one retry that honours the pace turns a transient 429 into
+# a candidate instead of a phantom miss.
+_THUMB_RETRIES = 2
 
 
 def _rank_candidates(text: str, candidates: list[dict]) -> list[dict]:
@@ -251,7 +267,7 @@ def _archival_anchor(video_id: int) -> str:
 
 def _fetch_archival(
     keywords: list[str], text: str = "", anchor: str = "", used: set[str] | None = None,
-    video_id: int | None = None,
+    video_id: int | None = None, era: str = "",
 ) -> dict | None:
     """Most content-relevant Wikimedia Commons ARCHIVAL photo candidate for a beat
     (already license- and resolution-filtered by the client); None when Commons has
@@ -261,15 +277,38 @@ def _fetch_archival(
     beat the SAME candidate pool, so without it one photo tops every CLIP ranking, the
     md5 dedup rejects it and beats needlessly fall to generation (the sibling-shorts
     batch_used lesson). "Thật khi có thể, vẽ khi phải"."""
-    query = f"{anchor} {' '.join(keywords[:2])}".strip()
-    cands = stock_clients.search_wikimedia_commons(query)
-    if not cands and anchor:
-        # niche beat wording can over-narrow the search -- retry on the event alone
-        cands = stock_clients.search_wikimedia_commons(anchor)
+    cands: list[dict] = []
+    for label, query in _archival_queries(keywords, anchor, era):
+        cands = stock_clients.search_wikimedia_commons(query)
+        if cands:
+            log.info("archival query %s hit: %r -> %d candidate(s)", label, query, len(cands))
+            break
     ranked = _rank_candidates(text, cands)
     if used:
         ranked = [c for c in ranked if c["url"] not in used]
     return _first_beat_relevant(ranked, text, video_id)
+
+
+def _archival_queries(keywords: list[str], anchor: str, era: str) -> list[tuple[str, str]]:
+    """Commons queries to try in order, stopping at the first that returns anything.
+
+    Commons full-text ANDs its terms, so the beat-specific query almost never matches a file
+    description and the search has in practice always fallen through to the event name alone.
+    That is fine while the event name is also a searchable thing ("The Halifax Explosion" ->
+    eight 1917 plates) and useless when it is a poetic one: "Star Dust" returns the Cone Nebula,
+    the Helix Nebula, and a motel sign in Reno.
+
+    Pinning the year is what separates the two. Measured: "Star Dust" -> 7 hits, none the
+    aircraft; "Star Dust 1947" -> 6 hits led by the actual Avro Lancastrian G-AGWH that
+    vanished. "The Halifax Explosion 1917" keeps the same 1917 plates, so the good case is
+    untouched. The year rides ahead of the bare anchor for exactly that reason.
+    """
+    queries = [("anchor+keywords", f"{anchor} {' '.join(keywords[:2])}".strip())]
+    if anchor and era:
+        queries.append(("anchor+era", f"{anchor} {era}"))
+    if anchor:
+        queries.append(("anchor", anchor))
+    return [(label, q) for label, q in queries if q]
 
 
 def _first_beat_relevant(ranked: list[dict], text: str, video_id: int | None) -> dict | None:
@@ -281,28 +320,52 @@ def _first_beat_relevant(ranked: list[dict], text: str, video_id: int | None) ->
     and a judicial inquiry -- Commons is full of museum catalogue photography, and the
     anchor-only retry hands every beat that same pool. Only the top few are judged: each
     judgment is a vision call, and a candidate the ranker buried is not going to be the save.
-    Unjudgeable (no backend / quota / outage) degrades to the old take-the-top behaviour rather
-    than starving the render of real photographs."""
+    Unjudgeable (no backend / quota / outage) degrades to taking the best candidate the gate has
+    NOT already turned down, rather than starving the render of real photographs. Two rules keep
+    that degradation honest, both learned the hard way:
+
+    A preview that fails to download is not a verdict. It used to `continue`, burning one of the
+    judging slots without producing a score, so a Wikimedia throttle (the CLIP rerank burst just
+    before this call routinely trips one) emptied the budget and the beat reported a miss -- the
+    tier vanished on a transient 429 that predates any judgement.
+
+    And falling back to `ranked[0]` is wrong once `ranked[0]` has been scored BELOW the floor:
+    that hands the beat the exact image the gate just rejected. Fail-open may only reach for
+    candidates that were never judged."""
     if not ranked:
         return None
     if not text:
         return ranked[0]
     from ..content import llm_client  # lazy: keeps the content package off this import path
 
+    rejected: set[int] = set()
+    judged = downloaded = 0
     with tempfile.TemporaryDirectory() as td:
-        for i, cand in enumerate(ranked[:_BEAT_MATCH_MAX_JUDGED]):
+        for i, cand in enumerate(ranked):
+            if judged >= _BEAT_MATCH_MAX_JUDGED:
+                break
             thumb = _download_thumb(cand.get("thumb", ""), Path(td) / f"m{i}.jpg")
-            if thumb is None:
+            if thumb is None:  # no preview to look at: not a rejection, and not a spent slot
                 continue
+            downloaded += 1
             score = llm_client.score_scene_match(text, thumb.read_bytes(), video_id=video_id)
             if score is None:
-                log.warning("archival beat-match unjudged -> keeping top candidate un-vetted")
-                return ranked[0]
+                log.warning("archival beat-match unjudged -> falling back to the best un-rejected candidate")
+                return _first_unrejected(ranked, rejected)
+            judged += 1
             log.info("archival beat-match %.2f (min %.2f) img=%s",
                      score, settings.ARCHIVAL_BEAT_MATCH_MIN, cand["url"].rsplit("/", 1)[-1][:60])
             if score >= settings.ARCHIVAL_BEAT_MATCH_MIN:
                 return cand
+            rejected.add(i)
+    if downloaded == 0:  # every preview 404'd/throttled -- the gate never got to look at anything
+        log.warning("archival beat-match saw no downloadable preview -> keeping the top candidate un-vetted")
+        return ranked[0]
     return None
+
+
+def _first_unrejected(ranked: list[dict], rejected: set[int]) -> dict | None:
+    return next((c for i, c in enumerate(ranked) if i not in rejected), None)
 
 
 def _fetch_stock(keywords: list[str], text: str = "") -> tuple[str, str] | None:
@@ -490,7 +553,7 @@ def acquire(
             # map/diagram beats go straight to generation.
             record = None
             if not is_map:
-                best = _fetch_archival(keywords, text, anchor, archival_used, video_id)
+                best = _fetch_archival(keywords, text, anchor, archival_used, video_id, era)
                 if best is None:
                     log.info("beat %s: archival MISS (no qualifying Commons candidate)", beat_id)
                 else:

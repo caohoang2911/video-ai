@@ -37,6 +37,10 @@ COMMONS_PER_SECOND = 1.0
 COMMONS_MIN_WIDTH = 1000
 _COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 _COMMONS_UA = "ai-operator/0.1 (self-hosted documentary pipeline)"  # Wikimedia UA policy
+# Width of the small preview CLIP ranks on. Wikimedia renders a FIXED set of widths per file
+# and answers 400 for anything else -- measured on a real file: 480 -> 400, 500 -> 200,
+# 640 -> 400, 1920 -> 200. Do not "round" this to a nicer number without re-measuring.
+_PREVIEW_WIDTH_PX = 500
 # Motion b-roll: prefer the smallest file that still clears 1080p -- it costs the least
 # bandwidth and the ffmpeg normalize pass rescales everything to 1920x1080 anyway.
 VIDEO_MIN_HEIGHT = 1080
@@ -229,8 +233,12 @@ def search_wikimedia_commons(keyword: str, per_page: int = CANDIDATE_POOL) -> li
         if not original.lower().endswith((".jpg", ".jpeg", ".png")):
             continue  # svg/tiff/pdf renders behave badly downstream
         full = info.get("thumburl") or original
-        # Commons thumb URLs embed the width -- swap for a small CLIP-ranking preview
-        thumb = full.replace("/1920px-", "/480px-") if "/1920px-" in full else full
+        # Commons thumb URLs embed the width, so a small CLIP-ranking preview is one string
+        # swap -- but the width has to be one Wikimedia actually renders. 480 is not: it
+        # answers 400 for it (500 answers 200), which silently killed every preview download
+        # on the ~60% of candidates whose URL carries a width at all. Nothing surfaced,
+        # because a failed preview only degrades CLIP to provider order.
+        thumb = full.replace("/1920px-", f"/{_PREVIEW_WIDTH_PX}px-") if "/1920px-" in full else full
         out.append({
             "url": full,
             "thumb": thumb,
