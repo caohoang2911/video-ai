@@ -228,6 +228,12 @@
 
     <section class="card">
       <h3>Tài nguyên media ({{ assets | length }})</h3>
+      {% if visual_mix.total %}
+      <p class="small">hình ảnh: <b>{{ visual_mix.real_pct }}% ảnh thật</b>
+        <span class="muted">({{ visual_mix.real }} tư liệu · {{ visual_mix.drawn }} AI vẽ
+        {%- if visual_mix.stock %} · {{ visual_mix.stock }} stock{% endif %})</span>
+        {% if visual_mix.real == 0 %}<span class="warn">— không có ảnh tư liệu nào khớp lời kể</span>{% endif %}</p>
+      {% endif %}
       <table><thead><tr><th>Loại</th><th>Nguồn</th><th>Giấy phép</th><th>Đường dẫn</th></tr></thead><tbody>
       {% for a in assets %}<tr><td>{{ a.kind }}</td><td>{{ a.source }}</td><td>{{ a.license or '—' }}</td>
         <td class="muted small">{{ a.url_or_path }}</td></tr>

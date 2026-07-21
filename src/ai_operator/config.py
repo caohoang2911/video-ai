@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     # went unjudged (= kept, gate silently off). The flash-lite line sustains a whole pool in
     # one burst and answers this yes/no-with-a-number question just as well.
     GEMINI_VISION_MODEL: str = "gemini-3.1-flash-lite"
+    # Minimum agreement (0..1) between an archival photo and the line the narrator speaks over
+    # it. CLIP re-ranking only ORDERS Commons candidates; without a floor the top of an
+    # entirely off-beat pool still won, and Commons' museum catalogue photography meant beats
+    # about a judicial inquiry got a rusted hull fragment in a display case. Below the floor the
+    # beat falls through to stock/generation, whose prompt is written from the narration. Same
+    # near-binary Gemini scale as THUMB_RELEVANCE_MIN — lower it to keep more real photographs.
+    ARCHIVAL_BEAT_MATCH_MIN: float = 0.5
     # Enhance the primary thumbnail hero (real archival) through FLUX Kontext — subject-
     # preserving relight+grade, ~$0.04/video. Off => PIL grade only (no fal call).
     THUMBNAIL_KONTEXT_ENHANCE: bool = True

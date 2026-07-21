@@ -9,6 +9,7 @@ import importlib
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -206,6 +207,9 @@ def test_fetch_archival_skips_urls_already_used_by_earlier_beats(monkeypatch):
     ]
     monkeypatch.setattr(visual_fetcher.stock_clients, "search_wikimedia_commons", lambda q: list(cands))
     monkeypatch.setattr(visual_fetcher, "_rank_candidates", lambda text, c: list(c))
+    # the beat-match floor has its own tests; here every candidate is on-beat
+    monkeypatch.setattr(visual_fetcher, "_first_beat_relevant",
+                        lambda ranked, text, video_id: ranked[0] if ranked else None)
 
     first = visual_fetcher._fetch_archival(["kw"], "t", "Event", set())
     assert first["url"] == "u1"
@@ -409,3 +413,80 @@ def test_image_credits_cc_by_lines_plus_single_pd_provenance(tmp_path, monkeypat
         "Jane Doe — CC BY 4.0 — https://c/1",
         "Public-domain photographs via Wikimedia Commons",   # 2 PD files -> one line
     ]
+
+
+# --------------------------------------------------------------------------------------
+# _first_beat_relevant -- the floor that lets an off-beat pool fall through to the tiers below
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def beat_match(monkeypatch, tmp_path):
+    """Stub the thumb download + the vision judgment; return the recorded scoring order."""
+
+    def _install(scores: dict[str, float | None]):
+        thumb = tmp_path / "t.jpg"
+        thumb.write_bytes(b"jpeg")
+        monkeypatch.setattr(visual_fetcher, "_download_thumb", lambda url, dest: thumb if url else None)
+
+        def _score(narration, image_bytes, video_id=None):
+            judged.append(order.pop(0))
+            return scores[judged[-1]]
+
+        order = list(scores)
+        from ai_operator.content import llm_client
+
+        monkeypatch.setattr(llm_client, "score_scene_match", _score)
+
+    judged: list[str] = []
+    _install.judged = judged
+    return _install
+
+
+def _cand(url):
+    return {"url": url, "thumb": f"th-{url}", "license": "PD", "artist": "", "file_page": ""}
+
+
+def test_off_beat_pool_falls_through_instead_of_illustrating_the_wrong_thing(beat_match):
+    # Commons is full of museum catalogue photography: a rusted hull fragment in a display case
+    # belongs to the event and shows nothing of a line about a judicial inquiry. Better to hand
+    # the beat to generation, whose prompt is written from the narration, than to show it.
+    beat_match({"u1": 0.0, "u2": 0.0})
+
+    assert visual_fetcher._first_beat_relevant([_cand("u1"), _cand("u2")], "a judicial inquiry opened", 1) is None
+
+
+def test_second_candidate_saves_the_beat_when_the_top_one_is_off(beat_match):
+    beat_match({"u1": 0.0, "u2": 1.0})
+
+    best = visual_fetcher._first_beat_relevant([_cand("u1"), _cand("u2")], "the ship detonated", 1)
+
+    assert best["url"] == "u2"
+
+
+def test_only_the_top_candidates_are_judged(beat_match):
+    # One vision call per candidate: a photo the ranker buried is not going to be the save.
+    beat_match({"u1": 0.0, "u2": 0.0, "u3": 1.0})
+
+    best = visual_fetcher._first_beat_relevant([_cand(u) for u in ("u1", "u2", "u3")], "text", 1)
+
+    assert best is None
+    assert len(beat_match.judged) == visual_fetcher._BEAT_MATCH_MAX_JUDGED
+
+
+def test_unjudgeable_beat_keeps_the_top_candidate(beat_match):
+    # No key / quota / outage must not starve the render of real photographs — degrade to the
+    # old take-the-top behaviour rather than sending every beat to generation.
+    beat_match({"u1": None})
+
+    best = visual_fetcher._first_beat_relevant([_cand("u1"), _cand("u2")], "text", 1)
+
+    assert best["url"] == "u1"
+
+
+def test_beat_without_narration_is_not_judged(beat_match):
+    beat_match({})
+
+    best = visual_fetcher._first_beat_relevant([_cand("u1")], "", 1)
+
+    assert best["url"] == "u1" and beat_match.judged == []

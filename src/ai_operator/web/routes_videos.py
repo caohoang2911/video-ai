@@ -193,6 +193,23 @@ def list_videos(request: Request, state: str | None = None, kind: str | None = N
     })
 
 
+def _visual_mix(assets: list[dict]) -> dict:
+    """How much of this video is a real photograph vs something a model drew.
+
+    The archival tier only accepts a Commons photo that matches the line spoken over it, so a
+    video whose event is thinly covered quietly shifts to generated imagery. That shift is
+    invisible in a flat asset list — this counts it so the operator sees it on the video's own
+    page instead of discovering it in the finished render."""
+    real = sum(1 for a in assets if a["kind"] == "archival")
+    drawn = sum(1 for a in assets if a["kind"] == "gen")
+    stock = sum(1 for a in assets if a["kind"] in ("stock", "video_broll"))
+    total = real + drawn + stock
+    return {
+        "real": real, "drawn": drawn, "stock": stock, "total": total,
+        "real_pct": round(100 * real / total) if total else 0,
+    }
+
+
 @router.get("/videos/{video_id}")
 def video_detail(request: Request, video_id: int):
     with SessionLocal() as s:
@@ -205,6 +222,7 @@ def video_detail(request: Request, video_id: int):
              "url_or_path": a.url_or_path}
             for a in s.scalars(select(Asset).where(Asset.video_id == video_id).order_by(Asset.id)).all()
         ]
+        visual_mix = _visual_mix(assets)
         costs = [
             {"step": c.step, "provider": c.provider, "units": c.units,
              "cost": c.actual_cost if c.actual_cost is not None else c.estimated_cost,
@@ -248,7 +266,7 @@ def video_detail(request: Request, video_id: int):
         ]
     allowed = sorted(c for c, t in _DECISION_TARGETS.items() if can_transition(v.state, t))
     return render(request, "video_detail.html", {
-        "video": detail, "assets": assets, "costs": costs,
+        "video": detail, "assets": assets, "visual_mix": visual_mix, "costs": costs,
         "decisions": decisions, "upload": upload_row, "allowed_decisions": allowed,
         "transcript": _transcript(v.script_path),  # spoken narration for the copy-subtitles button
         "shorts": shorts,  # children of a main; empty for a short

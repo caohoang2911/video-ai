@@ -43,6 +43,14 @@ _RELEVANCE_PROMPT = (
     "modern memorial, plaque, sign, museum display or scale model, map, or a modern photo of "
     "the location today. Number only, no words."
 )
+# The beat-level question. Commons is full of museum catalogue photography, so an image can
+# belong to the right event and still show nothing the narrator is talking about.
+_SCENE_MATCH_PROMPT = (
+    'A documentary narrator says: "{narration}"\n'
+    "Does this image show what the narrator is describing? Answer with a single number from "
+    "0.0 to 1.0 (1.0 = it shows this scene or its subject, 0.0 = it shows something else "
+    "entirely). Number only, no words."
+)
 # Adaptive thinking tokens count against max_tokens (it is the ceiling on thinking + text
 # combined). A tight ceiling lets a long thinking pass consume the whole budget and return
 # a response with NO text block at all, which silently drops the call to the Gemini
@@ -234,7 +242,34 @@ def score_image_relevance(
 
     Backs the thumbnail relevance gate: a real archival photo of the WRONG ship/livery scores
     low and gets dropped, so only an image that actually depicts the event faces the video."""
-    if not subject or not image_bytes or not settings.GEMINI_API_KEY:
+    if not subject:
+        return None
+    return _score_vision(
+        _RELEVANCE_PROMPT.format(subject=subject), image_bytes,
+        mime_type=mime_type, step="thumb_relevance", video_id=video_id,
+    )
+
+
+def score_scene_match(narration: str, image_bytes: bytes, *, mime_type: str = "image/jpeg",
+                      video_id: int | None = None) -> float | None:
+    """0..1 agreement between an image and what the narrator is SAYING over it, or None when
+    the backend can't judge. Best-effort: never raises.
+
+    Backs the archival floor. The event-level question ("is this the Halifax explosion?") is
+    not enough for a beat: a museum's catalogue photo of a rusted hull fragment belongs to the
+    event and still has nothing to do with a line about a judicial inquiry."""
+    if not narration:
+        return None
+    return _score_vision(
+        _SCENE_MATCH_PROMPT.format(narration=narration.strip()[:400]), image_bytes,
+        mime_type=mime_type, step="archival_beat_match", video_id=video_id,
+    )
+
+
+def _score_vision(prompt: str, image_bytes: bytes, *, mime_type: str, step: str,
+                  video_id: int | None) -> float | None:
+    """One metered Gemini vision judgment returning a 0..1 number, or None on any failure."""
+    if not image_bytes or not settings.GEMINI_API_KEY:
         return None
     try:
         from google import genai
@@ -244,10 +279,10 @@ def score_image_relevance(
 
     try:
         ledger_id = check_and_reserve(
-            _GEMINI_VISION_FLAT_ESTIMATE_USD, step="thumb_relevance", provider="gemini", video_id=video_id
+            _GEMINI_VISION_FLAT_ESTIMATE_USD, step=step, provider="gemini", video_id=video_id
         )
     except Exception as exc:  # noqa: BLE001 - budget cap / ledger error -> can't judge, never crash render
-        log.warning("Gemini relevance reserve failed (%s) -> image not judged", exc)
+        log.warning("Gemini vision reserve failed (%s) -> image not judged", exc)
         return None
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -255,10 +290,7 @@ def score_image_relevance(
         try:
             response = client.models.generate_content(
                 model=settings.GEMINI_VISION_MODEL,
-                contents=[
-                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                    _RELEVANCE_PROMPT.format(subject=subject),
-                ],
+                contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
                 config=types.GenerateContentConfig(
                     max_output_tokens=16,
                     # No chain-of-thought needed for a one-number answer; thinking would spend the
@@ -268,11 +300,11 @@ def score_image_relevance(
             )
         except Exception as exc:  # noqa: BLE001 - outage / bad key / quota -> release the reservation
             if attempt == 0 and _is_quota_error(exc):
-                log.warning("Gemini relevance score hit a quota wall (%s) -> retrying once", exc)
+                log.warning("Gemini vision hit a quota wall (%s) -> retrying once", exc)
                 time.sleep(_VISION_QUOTA_RETRY_SLEEP_S)
                 continue
             record_actual(ledger_id, 0.0)  # nothing billed on failure (mirrors the other providers)
-            log.warning("Gemini relevance score failed (%s) -> image not judged", exc)
+            log.warning("Gemini vision call failed (%s) -> image not judged", exc)
             return None
         record_actual(ledger_id, _GEMINI_VISION_FLAT_ESTIMATE_USD)
         return _parse_unit_score(response.text)

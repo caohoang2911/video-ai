@@ -136,6 +136,10 @@ def _download_thumb(url: str, dest: Path) -> Path | None:
 # gap between fetches keeps us under the limit.
 _RERANK_MAX = 4
 _COMMONS_PACE_SEC = 1.2
+# How many CLIP-ranked candidates get a beat-match vision call before the beat gives up and
+# falls to the tiers below. Each is one metered call per beat, and a candidate the ranker
+# buried is not the one that saves the beat.
+_BEAT_MATCH_MAX_JUDGED = 2
 
 
 def _rank_candidates(text: str, candidates: list[dict]) -> list[dict]:
@@ -208,7 +212,8 @@ def _archival_anchor(video_id: int) -> str:
 
 
 def _fetch_archival(
-    keywords: list[str], text: str = "", anchor: str = "", used: set[str] | None = None
+    keywords: list[str], text: str = "", anchor: str = "", used: set[str] | None = None,
+    video_id: int | None = None,
 ) -> dict | None:
     """Most content-relevant Wikimedia Commons ARCHIVAL photo candidate for a beat
     (already license- and resolution-filtered by the client); None when Commons has
@@ -226,7 +231,40 @@ def _fetch_archival(
     ranked = _rank_candidates(text, cands)
     if used:
         ranked = [c for c in ranked if c["url"] not in used]
-    return ranked[0] if ranked else None
+    return _first_beat_relevant(ranked, text, video_id)
+
+
+def _first_beat_relevant(ranked: list[dict], text: str, video_id: int | None) -> dict | None:
+    """The best-ranked candidate that actually shows what this beat narrates, or None.
+
+    CLIP only ORDERS candidates, it never rejects: the top of an entirely off-beat pool still
+    won, so a beat could never fall through to the tiers below. That is how a wicker balloon
+    basket and a museum's rusted hull fragment ended up illustrating lines about stopped clocks
+    and a judicial inquiry -- Commons is full of museum catalogue photography, and the
+    anchor-only retry hands every beat that same pool. Only the top few are judged: each
+    judgment is a vision call, and a candidate the ranker buried is not going to be the save.
+    Unjudgeable (no backend / quota / outage) degrades to the old take-the-top behaviour rather
+    than starving the render of real photographs."""
+    if not ranked:
+        return None
+    if not text:
+        return ranked[0]
+    from ..content import llm_client  # lazy: keeps the content package off this import path
+
+    with tempfile.TemporaryDirectory() as td:
+        for i, cand in enumerate(ranked[:_BEAT_MATCH_MAX_JUDGED]):
+            thumb = _download_thumb(cand.get("thumb", ""), Path(td) / f"m{i}.jpg")
+            if thumb is None:
+                continue
+            score = llm_client.score_scene_match(text, thumb.read_bytes(), video_id=video_id)
+            if score is None:
+                log.warning("archival beat-match unjudged -> keeping top candidate un-vetted")
+                return ranked[0]
+            log.info("archival beat-match %.2f (min %.2f) img=%s",
+                     score, settings.ARCHIVAL_BEAT_MATCH_MIN, cand["url"].rsplit("/", 1)[-1][:60])
+            if score >= settings.ARCHIVAL_BEAT_MATCH_MIN:
+                return cand
+    return None
 
 
 def _fetch_stock(keywords: list[str], text: str = "") -> tuple[str, str] | None:
@@ -400,7 +438,7 @@ def acquire(
             # map/diagram beats go straight to generation.
             record = None
             if not is_map:
-                best = _fetch_archival(keywords, text, anchor, archival_used)
+                best = _fetch_archival(keywords, text, anchor, archival_used, video_id)
                 if best is None:
                     log.info("beat %s: archival MISS (no qualifying Commons candidate)", beat_id)
                 else:

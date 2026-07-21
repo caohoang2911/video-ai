@@ -174,3 +174,34 @@ def test_media_url_is_none_for_deleted_artifact(tmp_path, monkeypatch):
 
     live.unlink()  # revoice tore the render down; the DB pointer is now stale
     assert routes_videos._media_url(str(live)) is None
+
+
+def test_detail_shows_how_much_of_the_video_is_a_real_photograph(client):
+    """The archival tier only takes a Commons photo that matches the narration, so a thinly
+    covered event quietly shifts to generated imagery. A flat asset list hides that."""
+    from ai_operator.db.models import Asset
+
+    vid = _seed_video(state=VideoState.RENDERED.value, title="mix", idempotency_key="mix")
+    with SessionLocal() as s:
+        s.add_all([
+            Asset(video_id=vid, kind="archival", source="wikimedia", url_or_path="a.jpg", md5="a"),
+            Asset(video_id=vid, kind="gen", source="fal_flux", url_or_path="b.jpg", md5="b"),
+            Asset(video_id=vid, kind="gen", source="fal_flux", url_or_path="c.jpg", md5="c"),
+            Asset(video_id=vid, kind="gen", source="fal_flux", url_or_path="d.jpg", md5="d"),
+        ])
+        s.commit()
+
+    mix = client.get(f"/api/videos/{vid}").json()["visual_mix"]
+    assert (mix["real"], mix["drawn"], mix["real_pct"]) == (1, 3, 25)
+    assert "25% ảnh thật" in client.get(f"/videos/{vid}").text
+
+
+def test_detail_warns_when_no_archival_photo_matched(client):
+    from ai_operator.db.models import Asset
+
+    vid = _seed_video(state=VideoState.RENDERED.value, title="drawn", idempotency_key="drawn")
+    with SessionLocal() as s:
+        s.add(Asset(video_id=vid, kind="gen", source="fal_flux", url_or_path="b.jpg", md5="z"))
+        s.commit()
+
+    assert "không có ảnh tư liệu nào khớp lời kể" in client.get(f"/videos/{vid}").text
