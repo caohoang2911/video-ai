@@ -72,3 +72,37 @@ def test_no_provider_configured_raises(cfg):
     cfg()
     with pytest.raises(LLMError):
         complete("sys", "user")
+
+
+def test_stand_in_provider_is_recorded_as_a_fallback_in_the_ledger(cfg, monkeypatch):
+    """A degradation nobody can see later is a degradation that costs days to diagnose: every
+    Claude call once fell to Gemini for two days and only the ledger step name gave it away."""
+    cfg(anthropic="sk-a", gateway="http://localhost/v1", gemini="g")
+    steps: list[str] = []
+
+    def _fail(system, user, **kwargs):
+        steps.append(kwargs["step"])
+        raise RuntimeError("down")
+
+    def _ok(system, user, **kwargs):
+        steps.append(kwargs["step"])
+        return "text"
+
+    monkeypatch.setitem(llm_client._PROVIDERS, "anthropic", _fail)
+    monkeypatch.setitem(llm_client._PROVIDERS, "gateway", _ok)
+
+    complete("sys", "user", step="script_generate", thinking=True)
+
+    # first choice bills the plain step; the stand-in names itself
+    assert steps == ["script_generate", "script_generate_gateway_fallback"]
+
+
+def test_first_choice_provider_bills_the_plain_step(cfg, monkeypatch):
+    cfg(anthropic="sk-a", gemini="g")
+    steps: list[str] = []
+    monkeypatch.setitem(llm_client._PROVIDERS, "anthropic",
+                        lambda s, u, **kw: steps.append(kw["step"]) or "text")
+
+    complete("sys", "user", step="research_gate", thinking=True)
+
+    assert steps == ["research_gate"]  # not "..._anthropic_fallback"

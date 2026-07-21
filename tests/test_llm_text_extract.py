@@ -51,3 +51,28 @@ def test_effective_max_tokens_floors_for_adaptive_thinking():
     assert _effective_max_tokens(6000) == _ANTHROPIC_MIN_MAX_TOKENS
     assert _effective_max_tokens(_ANTHROPIC_MIN_MAX_TOKENS) == _ANTHROPIC_MIN_MAX_TOKENS
     assert _effective_max_tokens(32_000) == 32_000  # a larger explicit ask is respected
+
+
+def test_gemini_failure_releases_its_budget_reservation(monkeypatch):
+    """The fallback path runs when things are ALREADY breaking, so an unreleased reservation
+    accumulates fastest there — 16 orphaned rows were sitting in the ledger from one bad day.
+    Anthropic and the gateway both release on failure; Gemini must too."""
+    from ai_operator.content import llm_client
+
+    recorded: list[tuple[int, float]] = []
+    monkeypatch.setattr(llm_client.settings, "GEMINI_API_KEY", "g", raising=False)
+    monkeypatch.setattr(llm_client, "check_and_reserve", lambda *a, **k: 77)
+    monkeypatch.setattr(llm_client, "record_actual", lambda lid, cost: recorded.append((lid, cost)))
+
+    from google import genai
+
+    def _boom(**kwargs):
+        raise RuntimeError("429 quota exceeded")
+
+    monkeypatch.setattr(genai, "Client", lambda **kw: types.SimpleNamespace(
+        models=types.SimpleNamespace(generate_content=_boom)))
+
+    with pytest.raises(RuntimeError):
+        llm_client._complete_gemini("sys", "user", max_tokens=100, step="s", video_id=1)
+
+    assert recorded == [(77, 0.0)]  # reservation released, no phantom estimate left behind

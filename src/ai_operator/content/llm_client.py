@@ -83,10 +83,19 @@ def complete(
     an OpenAI-compatible gateway fronting a Claude Code plan accepts the request but strips
     the thinking parameter, and it prepends its own multi-thousand-token coding-agent system
     prompt that frames the model wrong for documentary prose. So those steps prefer the direct
-    key and treat the gateway as a fallback; every other step goes to the gateway first."""
-    for provider in _provider_chain(thinking):
+    key and treat the gateway as a fallback; every other step goes to the gateway first.
+
+    Only the FIRST-choice provider bills the plain step name; a stand-in bills
+    `{step}_{provider}_fallback`, so the ledger answers "did the good provider actually serve
+    this?" months later. A run where every Claude call silently degraded once cost two days of
+    debugging precisely because nothing durable recorded the degradation."""
+    for rank, provider in enumerate(_provider_chain(thinking)):
         try:
-            return _PROVIDERS[provider](system, user, max_tokens=max_tokens, step=step, video_id=video_id)
+            return _PROVIDERS[provider](
+                system, user, max_tokens=max_tokens,
+                step=step if rank == 0 else f"{step}_{provider}_fallback",
+                video_id=video_id,
+            )
         except Exception as exc:  # noqa: BLE001 - any provider error should trigger fallback, not crash the run
             log.warning("%s call failed (%s) — trying next provider", provider, exc)
     raise LLMError("No LLM provider succeeded: set ANTHROPIC_API_KEY, LLM_GATEWAY_URL or GEMINI_API_KEY")
@@ -200,22 +209,31 @@ def _complete_gemini(system: str, user: str, *, max_tokens: int, step: str, vide
     # No per-token Gemini price lives in constants.py (Anthropic-only pricing table),
     # so a flat conservative reservation still stops a fallback loop from draining budget.
     estimated = _GEMINI_FLAT_ESTIMATE_USD
-    ledger_id = check_and_reserve(estimated, step=f"{step}_gemini_fallback", provider="gemini", video_id=video_id)
+    # `step` already carries the caller's `_gemini_fallback` marker when this is a stand-in.
+    ledger_id = check_and_reserve(estimated, step=step, provider="gemini", video_id=video_id)
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=user,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max_tokens,
-            # gemini-2.5-flash "thinks" by default, and that reasoning spends the output-token
-            # budget -- on a complex prompt it burns the whole allowance and returns
-            # `response.text is None`, which then crashes json.loads far downstream. These calls
-            # want structured JSON, not chain-of-thought, so spend every token on the answer.
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
-        ),
-    )
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=user,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=max_tokens,
+                # gemini-2.5-flash "thinks" by default, and that reasoning spends the output-token
+                # budget -- on a complex prompt it burns the whole allowance and returns
+                # `response.text is None`, which then crashes json.loads far downstream. These calls
+                # want structured JSON, not chain-of-thought, so spend every token on the answer.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+    except Exception:
+        # Nothing billed on a failed request -- release the reservation, exactly as the other two
+        # providers do. This is the LAST-RESORT path: it runs when things are already breaking, so
+        # an unreleased estimate here accumulates fastest and eats the cap that keeps the rest of
+        # the pipeline alive.
+        record_actual(ledger_id, 0.0)
+        raise
     record_actual(ledger_id, estimated)  # no usage-based pricing available; reservation stands as actual
     text = response.text
     if not text:
