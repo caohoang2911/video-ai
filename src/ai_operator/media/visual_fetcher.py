@@ -376,13 +376,15 @@ def _generate_visual(
     # composition) draws far closer to the narration than a bag of search keywords.
     prompt = image_prompt.strip() or ", ".join(k for k in keywords if k) or mood
     # A generator defaults to the present day, and a documentary set in 1947 cannot carry a
-    # frame of people in jeans and nylon backpacks. Naming the year is not enough on its own --
-    # the exclusions are what actually keep modern dress and machinery out.
+    # frame of people in jeans and nylon backpacks. Constrain the period ADJECTIVALLY: an
+    # earlier wording listed the categories to police -- "clothing, vehicles, technology and
+    # architecture of that decade only, no modern vehicles" -- and a diffusion model paints the
+    # nouns it is handed. Asked for nothing but "andes mountains, snowy peaks, clouds" it
+    # returned two 1940s cars, a village and pedestrians; the same prompt under the wording
+    # below returned bare mountains. Naming a noun invites it, and negating one ("no modern
+    # vehicles") still names it.
     if era:
-        prompt = (
-            f"set in {era}, period-accurate to {era}: clothing, vehicles, technology and "
-            f"architecture of that decade only, no modern dress, no modern vehicles. {prompt}"
-        )
+        prompt = f"a {era} period scene, historically accurate to {era}, nothing anachronistic. {prompt}"
 
     # Generator tiers in priority order. fal FLUX.1-dev is the primary generator (faster and
     # higher quality); local SDXL is the offline fallback so a render survives a fal/network
