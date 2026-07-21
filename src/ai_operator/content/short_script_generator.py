@@ -75,6 +75,11 @@ Rules for EVERY short (the curiosity-gap contract):
    inquest\nhe envied the 400 dead".
 9. `beats`: 5-6 visual beats (a new image every 5-7 seconds keeps swipe-away at bay);
    keywords should match the source shot list's imagery so existing visuals can be reused.
+   EVERY beat carries `narration_span`: the EXACT sentence(s) of your own `narration` that
+   this beat illustrates, copied verbatim. The spans must run in order and together cover
+   the whole narration with no gaps and no overlaps -- the renderer times each image from
+   its span, so a beat whose span does not appear verbatim in the narration lands its image
+   on the wrong line.
    LOOP ENDING: the LAST beat's keywords echo the FIRST beat's imagery (same keyword
    family) so the short loops seamlessly back into its opening frame on rewatch.
 10. `end_card_text`: the 3-second closing card. TWO fragments, <=5 words each, on separate
@@ -85,7 +90,7 @@ Rules for EVERY short (the curiosity-gap contract):
 
 Return JSON only:
 {"shorts": [{"title": str, "overlay_headline": str, "narration": str,
-  "beats": [{"keywords": [str], "mood": str}], "curiosity_question": str,
+  "beats": [{"keywords": [str], "mood": str, "narration_span": str}], "curiosity_question": str,
   "end_card_text": str, "hashtags": [str]}]}"""
 
 

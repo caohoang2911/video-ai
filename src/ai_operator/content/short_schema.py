@@ -21,6 +21,11 @@ class ShortBeat(BaseModel):
 
     keywords: list[str] = Field(min_length=1, max_length=4)
     mood: str
+    # The exact narration sentence(s) this beat illustrates. Without it the renderer can only
+    # split the clip into equal slices, so an image drifts off the line it belongs to as soon
+    # as the sentences differ in length -- a UFO landing on the sentence about blizzards.
+    # Optional: pre-field scripts still validate and fall back to the even split.
+    narration_span: str = Field(default="", max_length=400)
 
 
 class ShortScript(BaseModel):

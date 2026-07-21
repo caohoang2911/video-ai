@@ -264,9 +264,9 @@ def test_force_generate_skips_stock_and_generates_every_beat(tmp_path, monkeypat
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("stock photo consulted")))
     gen_beats: list[int] = []
     monkeypatch.setattr(vf, "_generate_visual",
-                        lambda bid, kw, mood, dia, image_prompt="": (gen_beats.append(bid), (tmp_path / f"g{bid}.png", "sdxl"))[1])
+                        lambda bid, kw, mood, dia, image_prompt="", era="": (gen_beats.append(bid), (tmp_path / f"g{bid}.png", "sdxl"))[1])
     monkeypatch.setattr(vf, "_flush_generated_batch",
-                        lambda vid, items: [{"kind": "gen", "beat": it.beat_id} for it in items])
+                        lambda vid, items, era="": [{"kind": "gen", "beat": it.beat_id} for it in items])
 
     saved = vf.acquire(30, _beats(3), force_generate=True)
 
@@ -309,13 +309,13 @@ def test_illustration_beat_skips_stock_and_uses_image_prompt(tmp_path, monkeypat
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("stock photo consulted")))
     prompts: list[str] = []
 
-    def _gen(bid, kw, mood, dia, image_prompt=""):
+    def _gen(bid, kw, mood, dia, image_prompt="", era=""):
         prompts.append(image_prompt)
         return (tmp_path / f"g{bid}.png", "sdxl")
 
     monkeypatch.setattr(vf, "_generate_visual", _gen)
     monkeypatch.setattr(vf, "_flush_generated_batch",
-                        lambda vid, items: [{"kind": "gen", "beat": it.beat_id} for it in items])
+                        lambda vid, items, era="": [{"kind": "gen", "beat": it.beat_id} for it in items])
 
     beat = {"beat_id": 1, "keywords": ["eastland hull"], "mood": "tense",
             "visual_kind": "illustration",

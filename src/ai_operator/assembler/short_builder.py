@@ -74,7 +74,10 @@ def build_short(video_id: int) -> dict:
     # (image cuts snap to phrase boundaries instead of an even grid) and, when enabled,
     # its word times drive the karaoke captions. One transcription serves both.
     caps = transcribe(narration_path, with_words=settings.SHORTS_KARAOKE_CAPTIONS)
-    durations = _beat_durations(narration_dur, len(beats), caps)
+    targets = beat_targets(script.get("narration", ""), beats, narration_dur)
+    if targets is None:
+        log.info("short %s: beats carry no narration spans -- images fall back to an even split", video_id)
+    durations = _beat_durations(narration_dur, len(beats), caps, targets)
 
     work = video_dir / "segments"
     work.mkdir(parents=True, exist_ok=True)
@@ -138,17 +141,51 @@ _SNAP_TOLERANCE_S = 0.8
 _MIN_BEAT_S = 1.5
 
 
-def _beat_durations(narration_dur: float, n_beats: int, caps: list[dict]) -> list[float]:
-    """Per-beat durations for the Shorts segment loop: an even split whose interior
-    boundaries each snap to the nearest caption-segment end within _SNAP_TOLERANCE_S, so
-    the image cut lands between phrases instead of mid-word. Boundaries stay monotonic
-    with _MIN_BEAT_S between them, and durations always sum to narration_dur exactly."""
+def beat_targets(narration: str, beats: list[dict], narration_dur: float) -> list[float] | None:
+    """Where each image SHOULD cut, from the narration each beat says it illustrates.
+
+    Returns `n_beats - 1` interior boundary times, or None when the beats carry no usable
+    spans (older scripts) so the caller keeps the even split.
+
+    Speech runs at a near-constant rate, so a span's character offset into the narration is a
+    good proxy for its offset in time -- good enough to put the image on the right sentence,
+    which an even split cannot do once sentences differ in length. It fails safely: a span the
+    LLM paraphrased instead of copying is not found, and that one boundary falls back to its
+    even-split position rather than dragging the rest out of order.
+    """
+    if not narration or len(beats) < 2:
+        return None
+    total = len(narration)
+    per = narration_dur / len(beats)
+    targets, found, cursor = [], 0, 0
+    for i, beat in enumerate(beats[1:], start=1):  # beat 0 always starts at 0.0
+        span = (beat.get("narration_span") or "").strip()
+        # Search forward only: the same sentence can repeat, and a beat never illustrates
+        # narration that an earlier beat already passed.
+        at = narration.find(span, cursor) if span else -1
+        if at < 0:
+            targets.append(i * per)
+            continue
+        cursor = at + len(span)
+        found += 1
+        targets.append(at / total * narration_dur)
+    return targets if found else None
+
+
+def _beat_durations(
+    narration_dur: float, n_beats: int, caps: list[dict], targets: list[float] | None = None
+) -> list[float]:
+    """Per-beat durations for the Shorts segment loop: boundaries from `targets` (each beat's
+    own narration span) or an even split when there are none, each snapped to the nearest
+    caption-segment end within _SNAP_TOLERANCE_S so the image cut lands between phrases
+    instead of mid-word. Boundaries stay monotonic with _MIN_BEAT_S between them, and
+    durations always sum to narration_dur exactly."""
     per = narration_dur / n_beats
     ends = sorted(float(s.get("end") or 0.0) for s in caps)
     bounds: list[float] = []
     prev = 0.0
     for i in range(1, n_beats):
-        target = i * per
+        target = targets[i - 1] if targets and i - 1 < len(targets) else i * per
         cands = [
             e for e in ends
             if abs(e - target) <= _SNAP_TOLERANCE_S

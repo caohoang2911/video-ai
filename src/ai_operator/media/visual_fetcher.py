@@ -14,6 +14,7 @@ scarcity for obscure wrecks is expected, not an error.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 import re
@@ -186,6 +187,43 @@ def extract_entity(title: str) -> str:
     return _ENTITY_DELIMITERS.split(title, maxsplit=1)[0].strip()
 
 
+def _event_era(video_id: int) -> str:
+    """The year the story happens in, as a string, or "" when the script never states one.
+
+    A generator draws the present unless told otherwise: asked for "conspiracy theories, ufo
+    drawings, vintage newspaper headlines" it produced two men in jeans and nylon backpacks
+    watching a saucer, in a story set in 1947. Beat keywords describe a SUBJECT and rarely a
+    period, so the year has to be pinned separately. A SHORT carries no `event_year` of its
+    own -- it inherits the parent documentary's, the same redirect `_archival_anchor` makes.
+    """
+    own = _script_year(video_id)
+    if own:
+        return own                      # a main video states its own year: no DB round-trip
+    parent = _parent_id(video_id)
+    return _script_year(parent) if parent else ""
+
+
+def _script_year(video_id: int) -> str:
+    script = OUTPUT_DIR / str(video_id) / "script.json"
+    if not script.exists():
+        return ""
+    try:
+        return str(json.loads(script.read_text()).get("event_year") or "").strip()
+    except Exception as exc:  # noqa: BLE001 - era is a hint; a broken script must not stop visuals
+        log.warning("event-era lookup failed for video %s: %s", video_id, exc)
+        return ""
+
+
+def _parent_id(video_id: int) -> int | None:
+    try:
+        with SessionLocal() as s:
+            video = s.get(Video, video_id)
+            return video.parent_id if video else None
+    except Exception as exc:  # noqa: BLE001 - same best-effort stance as the archival anchor
+        log.warning("parent lookup failed for video %s: %s", video_id, exc)
+        return None
+
+
 def _archival_anchor(video_id: int) -> str:
     """Entity phrase anchoring Commons searches. Beat keywords describe VISUALS ("stopped
     clock", "burning ship") -- useless as archive queries; the archive is organized around
@@ -324,7 +362,8 @@ def _acquire_broll_clips(
 
 
 def _generate_visual(
-    beat_id: int, keywords: list[str], mood: str, is_diagram: bool, image_prompt: str = ""
+    beat_id: int, keywords: list[str], mood: str, is_diagram: bool, image_prompt: str = "",
+    era: str = "",
 ) -> tuple[Path, str] | None:
     # Escape hatch for a fast, fully stock-footage (no-generation) render: turns off image
     # generation so every beat resolves to stock (a diagram beat then falls to a stock photo
@@ -336,6 +375,14 @@ def _generate_visual(
     # The script's per-beat image_prompt (a written-out scene: subject, era details, mood,
     # composition) draws far closer to the narration than a bag of search keywords.
     prompt = image_prompt.strip() or ", ".join(k for k in keywords if k) or mood
+    # A generator defaults to the present day, and a documentary set in 1947 cannot carry a
+    # frame of people in jeans and nylon backpacks. Naming the year is not enough on its own --
+    # the exclusions are what actually keep modern dress and machinery out.
+    if era:
+        prompt = (
+            f"set in {era}, period-accurate to {era}: clothing, vehicles, technology and "
+            f"architecture of that decade only, no modern dress, no modern vehicles. {prompt}"
+        )
 
     # Generator tiers in priority order. fal FLUX.1-dev is the primary generator (faster and
     # higher quality); local SDXL is the offline fallback so a render survives a fal/network
@@ -360,7 +407,7 @@ def _generate_visual(
     return None
 
 
-def _flush_generated_batch(video_id: int, items: list[_GeneratedItem]) -> list[dict]:
+def _flush_generated_batch(video_id: int, items: list[_GeneratedItem], era: str = "") -> list[dict]:
     """Grade a batch of generated images for style coherence; regenerate outliers once."""
     paths = [it.path for it in items]
     ratio, outliers = asset_store.grade_batch_coherence(paths)
@@ -368,7 +415,9 @@ def _flush_generated_batch(video_id: int, items: list[_GeneratedItem]) -> list[d
         log.warning("batch coherence %.0f%% < 80%% -- regenerating %d outlier(s)", ratio * 100, len(outliers))
         for idx in outliers:
             it = items[idx]
-            regen = _generate_visual(it.beat_id, it.keywords, it.mood, it.is_diagram, image_prompt=it.image_prompt)
+            regen = _generate_visual(
+                it.beat_id, it.keywords, it.mood, it.is_diagram, image_prompt=it.image_prompt, era=era
+            )
             if regen is not None:
                 items[idx] = _GeneratedItem(
                     it.beat_id, it.keywords, it.mood, it.is_diagram, regen[1], regen[0], it.image_prompt
@@ -402,7 +451,8 @@ def acquire(
     total_beats = 0
     beat_seconds = _estimate_beat_seconds(video_id, shot_list)
     anchor = _archival_anchor(video_id)  # tên sự kiện neo mọi query Commons của video này
-    log.info("video %s: archival anchor=%r", video_id, anchor)
+    era = _event_era(video_id)  # pins generated stills to the decade the story happens in
+    log.info("video %s: archival anchor=%r era=%r", video_id, anchor, era or "unknown")
     archival_used: set[str] = set()  # ảnh đã lấy — beat sau chọn ảnh kế tiếp, không đụng hàng
 
     for i, beat in enumerate(shot_list):
@@ -471,7 +521,7 @@ def acquire(
         # Tier 3/4: generated stills (fal FLUX -> SDXL fallback by default; order per
         # IMAGE_GEN_BACKEND), graded for style coherence in batches.
         generated = _generate_visual(
-            beat_id, keywords, mood, is_diagram, image_prompt=beat.get("image_prompt", "")
+            beat_id, keywords, mood, is_diagram, image_prompt=beat.get("image_prompt", ""), era=era
         )
         if generated is None:
             # Last resort for ANY beat that reached generation and failed (generator missing,
@@ -492,11 +542,11 @@ def acquire(
             _GeneratedItem(beat_id, keywords, mood, is_diagram, source, path, beat.get("image_prompt", ""))
         )
         if len(pending) >= COHERENCE_BATCH_SIZE:
-            saved.extend(_flush_generated_batch(video_id, pending))
+            saved.extend(_flush_generated_batch(video_id, pending, era))
             pending = []
 
     if pending:
-        saved.extend(_flush_generated_batch(video_id, pending))
+        saved.extend(_flush_generated_batch(video_id, pending, era))
 
     _log_motion_ratio(video_id, motion_beats, total_beats)
     checkpoint.write(video_id, STEP, {"count": len(saved), "motion_beats": motion_beats})
