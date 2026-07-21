@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -28,14 +29,57 @@ from . import alerting, analytics_puller, job_worker, keepalive, pipeline_runner
 
 log = get_logger("ops.scheduler")
 
-MAX_PUBLISH_JITTER_HOURS = 48  # randomize go-live inside the weekly window (not a fixed daily slot)
+MAX_PUBLISH_JITTER_HOURS = 48  # horizon: land the go-live within ~2 US daytimes, never a fixed slot
 _rng = random.Random()         # module-level; tests inject a seeded Random for determinism
+
+# US daytime band the go-live is confined to. The audience is US-focused, so publishing at US
+# night wastes the (soft) first-hours distribution signal; 11:00-20:00 ET spans ~8am-8pm PT,
+# catching the waking->evening window across ET..PT. Timing is only a MINOR lever for evergreen
+# content (YouTube: "publish time is not known to impact long-term performance") — this just
+# avoids the dead US-night slots, it does not chase a mythical "golden hour".
+_PUBLISH_TZ = ZoneInfo("America/New_York")
+_BAND_START_H, _BAND_END_H = 11, 20
+_MIN_LEAD_SECONDS = 20 * 60  # publishAt must sit safely in the future for the API to accept it
+
+
+def _us_daytime_windows(floor: datetime, limit: datetime) -> list[tuple[datetime, datetime]]:
+    """UTC [start, end] slices of the ET daytime band that fall between `floor` and `limit`."""
+    windows: list[tuple[datetime, datetime]] = []
+    day = floor.astimezone(_PUBLISH_TZ).date()
+    for _ in range(15):  # bounded; 15 days covers any sane horizon
+        start = datetime(day.year, day.month, day.day, _BAND_START_H, tzinfo=_PUBLISH_TZ).astimezone(timezone.utc)
+        end = datetime(day.year, day.month, day.day, _BAND_END_H, tzinfo=_PUBLISH_TZ).astimezone(timezone.utc)
+        if start > limit:
+            break
+        start, end = max(start, floor), min(end, limit)
+        if start < end:
+            windows.append((start, end))
+        day += timedelta(days=1)
+    return windows
 
 
 def jittered_publish_at(now: datetime, rng: random.Random, max_jitter_hours: int = MAX_PUBLISH_JITTER_HOURS) -> str:
-    """A randomized `publishAt` within [now, now+max_jitter_hours], ISO-8601 UTC with a 'Z'."""
-    jitter = rng.randint(0, max_jitter_hours * 3600)
-    dt = now.astimezone(timezone.utc) + timedelta(seconds=jitter)
+    """A randomized `publishAt` inside the US daytime band (ET 11:00-20:00) within the next
+    `max_jitter_hours`, ISO-8601 UTC with a 'Z'. Uniform over the available band seconds so the
+    slot still varies day-to-day (anti-template); falls back to a plain in-window jitter if the
+    horizon is too small to contain any daytime band. Never returns a time in the past."""
+    now = now.astimezone(timezone.utc)
+    floor = now + timedelta(seconds=_MIN_LEAD_SECONDS)
+    limit = now + timedelta(hours=max_jitter_hours)
+    windows = _us_daytime_windows(floor, limit)
+    if not windows:  # horizon too tight for a daytime band -> plain jitter, still never in the past
+        span = max(1, int((limit - floor).total_seconds()))
+        dt = floor + timedelta(seconds=rng.randint(0, span - 1))
+        return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+    total = sum(int((e - s).total_seconds()) for s, e in windows)
+    pick = rng.randint(0, total - 1)
+    dt = windows[-1][0]  # fallback assignment (loop always assigns for a valid pick)
+    for s, e in windows:
+        span = int((e - s).total_seconds())
+        if pick < span:
+            dt = s + timedelta(seconds=pick)
+            break
+        pick -= span
     return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 

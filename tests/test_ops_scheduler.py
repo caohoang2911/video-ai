@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from ai_operator.cost import elevenlabs_char_guard as char_guard
 from ai_operator.ops import scheduler
@@ -48,6 +49,17 @@ def test_jitter_is_not_a_fixed_slot():
     now = datetime(2026, 7, 9, 12, 0, 0, tzinfo=timezone.utc)
     times = {scheduler.jittered_publish_at(now, random.Random(s)) for s in range(20)}
     assert len(times) > 1  # varied publish times, not one fixed slot
+
+
+def test_publish_lands_in_us_daytime_band():
+    # a US-focused channel must never go live at US night — from 02:00 ET the slot is pushed
+    # into the ET 11:00-20:00 daytime band, still varied (not a fixed slot).
+    et = ZoneInfo("America/New_York")
+    now = datetime(2026, 7, 9, 6, 0, 0, tzinfo=timezone.utc)  # 02:00 ET
+    for seed in range(200):
+        dt = _parse(scheduler.jittered_publish_at(now, random.Random(seed)))
+        assert dt > now  # never in the past
+        assert 11 <= dt.astimezone(et).hour < 20  # inside the daytime band
 
 
 # --------------------------------------------------------------------------------------
