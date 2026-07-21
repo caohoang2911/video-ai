@@ -122,7 +122,7 @@ def _generate_with_retry(system: str, user: str, research_result: dict, video_id
         prompt = user if last_error is None else (
             f"{user}\n\nPREVIOUS ATTEMPT WAS INVALID: {last_error}\nReturn corrected JSON only."
         )
-        raw = complete(system, prompt, max_tokens=6000, step="script_generate", video_id=video_id)
+        raw = complete(system, prompt, max_tokens=6000, step="script_generate", video_id=video_id, thinking=True)
         try:
             data = parse_json(raw)
             merged = {

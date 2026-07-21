@@ -68,7 +68,7 @@ def skeptic_verdicts(
     default = [SkepticVerdict("doubtful", "not evaluated") for _ in citations]
     try:
         user = f"Topic: {topic}\nAngle: {angle}\n\n" + _format_citations(citations)
-        raw = complete(_SKEPTIC_SYSTEM, user, max_tokens=1200, step="fact_skeptic", video_id=video_id)
+        raw = complete(_SKEPTIC_SYSTEM, user, max_tokens=1200, step="fact_skeptic", video_id=video_id, thinking=True)
         data = parse_json(raw)
     except Exception as exc:  # noqa: BLE001 - flag-only: a skeptic failure must not fail the video
         log.warning("fact_skeptic failed (%s) — defaulting all citations to doubtful", exc)

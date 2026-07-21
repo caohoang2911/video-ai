@@ -44,7 +44,7 @@ def research(topic_title: str, angle: str, video_id: int | None = None) -> dict:
     sourcing — this is the single control point against LLM-fabricated "history".
     """
     user = f"Topic: {topic_title}\nAngle: {angle}\nList sources and verify facts now."
-    raw = complete(_SYSTEM_PROMPT, user, max_tokens=1500, step="research_gate", video_id=video_id)
+    raw = complete(_SYSTEM_PROMPT, user, max_tokens=1500, step="research_gate", video_id=video_id, thinking=True)
     data = parse_json(raw)
 
     citations = [Citation(**c) for c in data.get("citations", [])]

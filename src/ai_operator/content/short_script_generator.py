@@ -124,7 +124,7 @@ def _request(parent_facts: str, n: int, video_id: int | None) -> list[ShortScrip
         f"Source documentary material:\n{parent_facts}\n\n"
         f"Produce {n} DISTINCT shorts, each built around a DIFFERENT top payoff."
     )
-    raw = complete(_SYSTEM, user, max_tokens=4096, step="short_scripts", video_id=video_id)
+    raw = complete(_SYSTEM, user, max_tokens=4096, step="short_scripts", video_id=video_id, thinking=True)
     data = parse_json(raw)
     valid: list[ShortScript] = []
     for i, item in enumerate(data.get("shorts", [])):

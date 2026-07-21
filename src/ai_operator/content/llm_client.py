@@ -48,25 +48,36 @@ def complete(
     max_tokens: int = 4096,
     step: str = "llm_complete",
     video_id: int | None = None,
+    thinking: bool = False,
 ) -> str:
-    """Call the primary LLM; fall back to Gemini on any failure. Returns raw text.
+    """Call the best available LLM for this step, falling back down the chain. Returns raw text.
 
-    Primary is the OpenAI-compatible gateway when LLM_GATEWAY_URL is set (opt-in), else
-    the official Anthropic API. Enabling the gateway routes THROUGH it (the official key
-    path is not also tried) — that's the point of the toggle."""
+    `thinking=True` marks a step whose output quality depends on the model's reasoning pass
+    (script and hook writing, research judgement). Only the direct Anthropic API delivers it:
+    an OpenAI-compatible gateway fronting a Claude Code plan accepts the request but strips
+    the thinking parameter, and it prepends its own multi-thousand-token coding-agent system
+    prompt that frames the model wrong for documentary prose. So those steps prefer the direct
+    key and treat the gateway as a fallback; every other step goes to the gateway first."""
+    for provider in _provider_chain(thinking):
+        try:
+            return _PROVIDERS[provider](system, user, max_tokens=max_tokens, step=step, video_id=video_id)
+        except Exception as exc:  # noqa: BLE001 - any provider error should trigger fallback, not crash the run
+            log.warning("%s call failed (%s) — trying next provider", provider, exc)
+    raise LLMError("No LLM provider succeeded: set ANTHROPIC_API_KEY, LLM_GATEWAY_URL or GEMINI_API_KEY")
+
+
+def _provider_chain(thinking: bool) -> list[str]:
+    """Providers to try in order for this step, best-quality first, given what is configured."""
+    chain: list[str] = []
+    if thinking and settings.ANTHROPIC_API_KEY:
+        chain.append("anthropic")
     if settings.LLM_GATEWAY_URL:
-        try:
-            return _complete_gateway(system, user, max_tokens=max_tokens, step=step, video_id=video_id)
-        except Exception as exc:  # noqa: BLE001 - any provider error should trigger fallback, not crash the run
-            log.warning("LLM gateway call failed (%s) — falling back to Gemini", exc)
-    elif settings.ANTHROPIC_API_KEY:
-        try:
-            return _complete_anthropic(system, user, max_tokens=max_tokens, step=step, video_id=video_id)
-        except Exception as exc:  # noqa: BLE001 - any provider error should trigger fallback, not crash the run
-            log.warning("Anthropic call failed (%s) — falling back to Gemini", exc)
+        chain.append("gateway")
+    elif settings.ANTHROPIC_API_KEY and "anthropic" not in chain:
+        chain.append("anthropic")
     if settings.GEMINI_API_KEY:
-        return _complete_gemini(system, user, max_tokens=max_tokens, step=step, video_id=video_id)
-    raise LLMError("No LLM provider configured: set ANTHROPIC_API_KEY or GEMINI_API_KEY")
+        chain.append("gemini")
+    return chain
 
 
 def _complete_gateway(system: str, user: str, *, max_tokens: int, step: str, video_id: int | None) -> str:
@@ -186,6 +197,14 @@ def _complete_gemini(system: str, user: str, *, max_tokens: int, step: str, vide
         # rather than handing an empty string to parse_json (a char-0 crash with no context).
         raise LLMError("Gemini returned no text (blocked or empty response)")
     return text
+
+
+# Built after the call functions exist so `complete` can dispatch by provider name.
+_PROVIDERS = {
+    "anthropic": _complete_anthropic,
+    "gateway": _complete_gateway,
+    "gemini": _complete_gemini,
+}
 
 
 def score_image_relevance(
