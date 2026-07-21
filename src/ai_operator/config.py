@@ -68,11 +68,12 @@ class Settings(BaseSettings):
     DISABLED_VISUAL_SOURCES: str = ""
     # Thumbnail hero: minimum event-relevance (subject vs image, 0..1) an archival photo must
     # clear to face the video — blocks good-looking but wrong-subject archives (e.g. the wrong
-    # ship's livery). Below it the hero falls back to a synthetic FLUX drama frame. Scored by
-    # Gemini vision (1.0 = depicts exactly this event, 0.0 = unrelated); ~0.5 keeps clear
-    # matches and drops mismatches — raise to be stricter. When no relevance backend is
-    # configured the gate can't judge and passes images through, but raises a loud operator
-    # alert so the disabled check is never silent.
+    # ship's livery). Below it the hero falls back to a synthetic FLUX drama frame. Gemini is
+    # asked whether the image is a photograph FROM THE TIME of the event, so a memorial, a museum
+    # exhibit, an illustration and a present-day photo of the site all land at 0.0 while a period
+    # photograph lands at 1.0; 0.5 sits in the empty gap — raise to be stricter. When no
+    # relevance backend is configured the gate can't judge and passes images through, but raises
+    # a loud operator alert so the disabled check is never silent.
     THUMB_RELEVANCE_MIN: float = 0.5
     # Gemini model backing that gate. It is picked for FREE-TIER REQUEST QUOTA before quality:
     # the gate fires one call per candidate image back-to-back, and gemini-2.5-flash's free

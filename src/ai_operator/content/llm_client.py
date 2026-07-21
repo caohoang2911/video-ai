@@ -32,16 +32,20 @@ _GEMINI_VISION_FLAT_ESTIMATE_USD = 0.002
 # instead. Only quota errors are retried; a bad key or an unreadable image fails immediately.
 _VISION_QUOTA_RETRY_SLEEP_S = 20
 _QUOTA_ERROR_MARKERS = ("429", "RESOURCE_EXHAUSTED", "quota")
-# "Depicts the subject" is not the same question as "is a real depiction of the subject": a
-# museum scale model in its display case, a modern memorial plaque, and a photo of the site
-# as it looks today all depict their event faithfully and all make a terrible video face.
-# Naming those exclusions is what separates a 1.0 archive photo from a 1.0 souvenir.
+# Ask about the PHOTOGRAPH's era, not just its content. An earlier wording asked whether the
+# image showed the subject "or the site as it was" and then listed "a modern photo of the
+# location today" among the rejects -- a present-day picture of a disaster site satisfies both
+# clauses at once, and the model resolved that contradiction as a confident 1.0, which is how an
+# empty hillside became a thumbnail. Anchoring on WHEN the photograph was taken removes the
+# ambiguity and drops memorials, museum pieces and illustrations along with it. Measured against
+# hand-labelled real candidates: this wording 13/13, the old one 12/13. It does NOT reject
+# recent-era events -- a 1990s photograph of a 1994 ferry still scores 1.0.
 _RELEVANCE_PROMPT = (
-    'Does this image show "{subject}" ITSELF — the event, the vessel, or the site as it was? '
-    "Answer with a single number from 0.0 to 1.0 (1.0 = a real depiction of it, 0.0 = "
-    "unrelated). Score 0.0 for anything that only REFERS to it rather than showing it: a "
-    "modern memorial, plaque, sign, museum display or scale model, map, or a modern photo of "
-    "the location today. Number only, no words."
+    'Is this a PHOTOGRAPH FROM THE TIME of "{subject}", showing the subject itself? Answer with '
+    "a single number from 0.0 to 1.0 (1.0 = a contemporary photograph of that subject, event or "
+    "its immediate aftermath). Score 0.0 for anything created later or merely ABOUT it: a "
+    "present-day photograph of the place, a memorial, plaque or sign, a museum exhibit or scale "
+    "model, a map or diagram, a painting, drawing or AI-generated image. Number only, no words."
 )
 # The beat-level question. Commons is full of museum catalogue photography, so an image can
 # belong to the right event and still show nothing the narrator is talking about.

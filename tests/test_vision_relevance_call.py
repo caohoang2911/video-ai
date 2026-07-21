@@ -95,3 +95,18 @@ def test_prompt_excludes_memorials_and_museum_pieces(vision):
     prompt = models.calls[0]["contents"][-1]
     assert "MS Estonia" in prompt
     assert "memorial" in prompt and "model" in prompt
+
+
+def test_prompt_asks_when_the_photograph_was_taken(vision):
+    """The wording this replaced asked whether the image showed the subject "or the site as it
+    was" while also rejecting "a modern photo of the location today" — a present-day picture of
+    a disaster site answers yes to both, and the contradiction shipped an empty hillside as a
+    thumbnail. The question must be anchored on the photograph's era, not only its content."""
+    models = vision("1.0")
+
+    llm_client.score_image_relevance("The St. Francis Dam Failure", b"jpegbytes")
+
+    prompt = models.calls[0]["contents"][-1]
+    assert "FROM THE TIME" in prompt          # era is the question, not an afterthought
+    assert "present-day photograph" in prompt  # ...and the opposite case is named as a reject
+    assert "site as it was" not in prompt      # the clause that contradicted it is gone
