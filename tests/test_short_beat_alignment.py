@@ -10,7 +10,7 @@ rendering.
 
 from __future__ import annotations
 
-from ai_operator.assembler.short_builder import _beat_durations, beat_targets
+from ai_operator.assembler.short_builder import _MIN_BEAT_S, _beat_durations, beat_targets
 
 # Sentences of deliberately uneven length -- the case an even split gets wrong.
 NARRATION = (
@@ -55,14 +55,46 @@ def test_script_without_spans_falls_back_to_the_even_split():
     assert beat_targets(NARRATION, plain, 60.0) is None
 
 
-def test_a_paraphrased_span_only_loses_its_own_boundary():
+def test_a_paraphrased_span_interpolates_between_its_matched_neighbours():
+    """One paraphrased span must stay LOCAL: its matched neighbours keep their real times and the
+    miss is interpolated between them, never dragged forward onto (or past) a later boundary."""
     beats = [dict(b) for b in BEATS]
-    beats[2]["narration_span"] = "the world thought aliens took it"  # not verbatim
+    beats[2]["narration_span"] = "the world thought aliens took it"  # not verbatim -> a miss
+
     targets = beat_targets(NARRATION, beats, 60.0)
 
-    assert targets is not None                       # the other spans still carry the timing
-    assert abs(targets[1] - 2 * 60.0 / 4) < 0.01     # this one boundary uses the even split
-    assert abs(targets[2] - NARRATION.index(SPANS[3]) / len(NARRATION) * 60.0) < 0.01
+    def real(k):
+        return NARRATION.index(SPANS[k]) / len(NARRATION) * 60.0
+
+    assert targets is not None
+    # the matched neighbours are untouched by the miss...
+    assert abs(targets[0] - real(1)) < 0.01
+    assert abs(targets[2] - real(3)) < 0.01
+    # ...and the paraphrased beat sits halfway between them (index-linear interpolation),
+    # which is NOT the even-split stand-in the old clamp used to drop it onto.
+    assert abs(targets[1] - (targets[0] + targets[2]) / 2) < 0.01
+    assert abs(targets[1] - 2 * 60.0 / 4) > 0.5
+
+
+def test_a_curly_typography_span_still_anchors():
+    """A model 'copying verbatim' drifts into curly quotes; the span must still locate."""
+    narration = "The ship's captain lied to the inquest. Then the vessel sank."
+    beats = [
+        {"keywords": ["a"], "mood": "m", "narration_span": "The ship’s captain lied to the inquest."},
+        {"keywords": ["b"], "mood": "m", "narration_span": "Then the vessel sank."},
+    ]
+    assert beat_targets(narration, beats, 20.0) is not None
+
+
+def test_targets_piled_near_the_end_never_produce_a_nonpositive_duration():
+    """Two beats both illustrating the closing line push their boundaries into the final ~1%%
+    of the text; the duration machinery must still hand back only positive beats (a negative
+    -t crashes ffmpeg, a zero-length beat is silently dropped)."""
+    durations = _beat_durations(41.0, 6, caps=[], targets=[7.0, 14.0, 21.0, 39.8, 40.2])
+
+    assert abs(sum(durations) - 41.0) < 1e-6
+    assert all(d > 0 for d in durations), durations
+    assert all(d >= _MIN_BEAT_S - 1e-6 for d in durations)
 
 
 def test_repeated_sentence_matches_forward_not_back():

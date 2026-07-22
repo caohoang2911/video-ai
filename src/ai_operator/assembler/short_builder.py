@@ -18,6 +18,7 @@ from pathlib import Path
 from ..checkpoint import is_done, make_idempotency_key
 from ..checkpoint import write as write_checkpoint
 from ..config import OUTPUT_DIR, settings
+from ..content.short_schema import locate_spans
 from ..db import InvalidTransition, SessionLocal, VideoState
 from ..db.models import Video
 from ..logging_setup import get_logger
@@ -74,10 +75,13 @@ def build_short(video_id: int) -> dict:
     # (image cuts snap to phrase boundaries instead of an even grid) and, when enabled,
     # its word times drive the karaoke captions. One transcription serves both.
     caps = transcribe(narration_path, with_words=settings.SHORTS_KARAOKE_CAPTIONS)
+    # beat_targets reports its own span coverage (none / partial); no need to log again here.
     targets = beat_targets(script.get("narration", ""), beats, narration_dur)
-    if targets is None:
-        log.info("short %s: beats carry no narration spans -- images fall back to an even split", video_id)
     durations = _beat_durations(narration_dur, len(beats), caps, targets)
+    if any(d <= 0 for d in durations):
+        # The duration machinery guards against this; a leak would hand ffmpeg a negative -t
+        # (crash) or a zero-length beat (silently dropped). Fail readably instead.
+        raise ValueError(f"short {video_id}: non-positive beat duration in {durations}")
 
     work = video_dir / "segments"
     work.mkdir(parents=True, exist_ok=True)
@@ -144,39 +148,66 @@ _MIN_BEAT_S = 1.5
 def beat_targets(narration: str, beats: list[dict], narration_dur: float) -> list[float] | None:
     """Where each image SHOULD cut, from the narration each beat says it illustrates.
 
-    Returns `n_beats - 1` interior boundary times, or None when the beats carry no usable
-    spans (older scripts) so the caller keeps the even split.
+    Returns `n_beats - 1` interior boundary times, or None when no beat span could be located
+    (older scripts with no spans, or a batch the model paraphrased) so the caller keeps the
+    even split.
 
     Speech runs at a near-constant rate, so a span's character offset into the narration is a
     good proxy for its offset in time -- good enough to put the image on the right sentence,
-    which an even split cannot do once sentences differ in length. It fails safely: a span the
-    LLM paraphrased instead of copying is not found, and that one boundary falls back to its
-    even-split position rather than dragging the rest out of order.
+    which an even split cannot do once sentences differ in length. Each beat that locates its
+    span is ANCHORED at that time; a beat whose span was paraphrased is INTERPOLATED between its
+    nearest anchored neighbours (and the fixed ends: beat 0 at 0.0, the last beat at
+    narration_dur), so one bad span stays local instead of dragging every later boundary with it.
+    Matching folds the typography a model drifts on while copying, so a near-verbatim span still
+    anchors.
     """
     if not narration or len(beats) < 2:
         return None
-    total = len(narration)
-    per = narration_dur / len(beats)
-    targets, found, cursor, floor = [], 0, 0, 0.0
-    for i, beat in enumerate(beats[1:], start=1):  # beat 0 always starts at 0.0
-        span = (beat.get("narration_span") or "").strip()
-        # Search forward only: the same sentence can repeat, and a beat never illustrates
-        # narration that an earlier beat already passed.
-        at = narration.find(span, cursor) if span else -1
-        if at < 0:
-            target = i * per
+    n = len(beats)
+    interior = n - 1
+    spans = [(b.get("narration_span") or "") for b in beats]
+    offsets, total = locate_spans(narration, spans)
+    if total == 0:
+        return None
+    # Anchor every interior beat that located its span. A span that resolves BEFORE an earlier
+    # anchor (the model emitted its beats out of order) is treated as unmatched rather than
+    # clamped forward -- forward-clamping is what used to warp every boundary after it.
+    anchors: list[tuple[int, float]] = [(0, 0.0)]
+    for i in range(1, n):
+        at = offsets[i]
+        if at is None:
+            continue
+        t = at / total * narration_dur
+        if t >= anchors[-1][1]:
+            anchors.append((i, t))
+    found = len(anchors) - 1  # excludes the fixed beat-0 anchor
+    if found == 0:
+        n_present = sum(1 for s in spans[1:] if s.strip())
+        if n_present:
+            first = next((s.strip()[:60] for s in spans[1:] if s.strip()), "")
+            log.warning(
+                "short: %s interior beat spans present but none located in the narration -- "
+                "images fall back to an even split; first: %r", n_present, first,
+            )
         else:
-            cursor = at + len(span)
-            found += 1
-            target = at / total * narration_dur
-        # Mixing found spans with even-split stand-ins can hand back a boundary EARLIER than the
-        # one before it -- a beat whose span was paraphrased takes its even-split slot while the
-        # next beat's real span sits further back in the text. Boundaries must only move forward;
-        # the caller can enforce a minimum length but cannot undo an inversion.
-        target = max(target, floor)
-        floor = target
-        targets.append(target)
-    return targets if found else None
+            log.info("short: beats carry no narration spans -- images fall back to an even split")
+        return None
+    if found < interior:
+        log.warning(
+            "short: %s/%s interior beat spans located, %s interpolated between neighbours",
+            found, interior, interior - found,
+        )
+    anchors.append((n, narration_dur))
+    targets: list[float] = []
+    for i in range(1, n):
+        exact = next((t for bi, t in anchors if bi == i), None)
+        if exact is not None:
+            targets.append(exact)
+            continue
+        lo = max((a for a in anchors if a[0] < i), key=lambda a: a[0])
+        hi = min((a for a in anchors if a[0] > i), key=lambda a: a[0])
+        targets.append(lo[1] + (i - lo[0]) / (hi[0] - lo[0]) * (hi[1] - lo[1]))
+    return targets
 
 
 def _beat_durations(
@@ -185,22 +216,29 @@ def _beat_durations(
     """Per-beat durations for the Shorts segment loop: boundaries from `targets` (each beat's
     own narration span) or an even split when there are none, each snapped to the nearest
     caption-segment end within _SNAP_TOLERANCE_S so the image cut lands between phrases
-    instead of mid-word. Boundaries stay monotonic with _MIN_BEAT_S between them, and
-    durations always sum to narration_dur exactly."""
+    instead of mid-word. Every boundary keeps _MIN_BEAT_S behind it AND reserves _MIN_BEAT_S
+    for each beat still ahead, so no beat -- including the last -- is squeezed below the floor
+    or pushed past narration_dur into a negative duration; durations always sum to narration_dur
+    exactly."""
     per = narration_dur / n_beats
+    if narration_dur < n_beats * _MIN_BEAT_S:
+        # Too little audio to give every beat a real shot; an even split at least stays positive.
+        return [per] * n_beats
     ends = sorted(float(s.get("end") or 0.0) for s in caps)
     bounds: list[float] = []
     prev = 0.0
     for i in range(1, n_beats):
         target = targets[i - 1] if targets and i - 1 < len(targets) else i * per
-        cands = [
-            e for e in ends
-            if abs(e - target) <= _SNAP_TOLERANCE_S
-            and prev + _MIN_BEAT_S <= e <= narration_dur - _MIN_BEAT_S
-        ]
+        lo = prev + _MIN_BEAT_S
+        # Reserve a whole minimum beat for each of the (n_beats - i) beats after this boundary,
+        # so the final beat can never collapse to zero or overshoot into a negative duration
+        # (which crashes the ffmpeg trim filter) when several targets pile up near the end.
+        hi = narration_dur - _MIN_BEAT_S * (n_beats - i)
+        cands = [e for e in ends if abs(e - target) <= _SNAP_TOLERANCE_S and lo <= e <= hi]
         # No caption end near the target: keep the boundary moving forward, but by a real beat
         # rather than 0.1s. Two frames of an image is a flicker, not a shot.
-        bounds.append(min(cands, key=lambda e: abs(e - target)) if cands else max(target, prev + _MIN_BEAT_S))
+        chosen = min(cands, key=lambda e: abs(e - target)) if cands else target
+        bounds.append(min(max(chosen, lo), hi))
         prev = bounds[-1]
     return [b - a for a, b in zip([0.0, *bounds], [*bounds, narration_dur])]
 

@@ -8,10 +8,50 @@ a bare teaser (no fact, too short) and a spoiler (question missing / statement e
 
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 NARRATION_MIN_WORDS = 60   # ~25s at documentary TTS pace — below this it's a bare teaser
 NARRATION_MAX_WORDS = 130  # ~50s — above this the render can exceed the 60s Shorts cap
+
+_WHITESPACE = re.compile(r"\s+")
+# The typography an LLM drifts into while "copying verbatim": curly quotes, en/em dashes and
+# the no-break space all read as their plain ASCII twins to a human but break str.find.
+_TYPO_FOLD = str.maketrans({
+    "‘": "'", "’": "'", "“": '"', "”": '"',
+    "–": "-", "—": "-", " ": " ",
+})
+
+
+def normalize_for_match(text: str) -> str:
+    """Fold the typography a model drifts on while copying a narration sentence so a span still
+    locates in the narration it came from — curly quotes, en/em dashes, nbsp, the ellipsis
+    glyph, collapsed whitespace, case. The renderer's beat timing and this schema's span
+    validator share it, so they agree on what "found" means."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("…", "...")
+    text = text.translate(_TYPO_FOLD)
+    return _WHITESPACE.sub(" ", text).strip().casefold()
+
+
+def locate_spans(narration: str, spans: list[str]) -> tuple[list[int | None], int]:
+    """For each span, its offset into the NORMALIZED narration (or None when absent), plus the
+    normalized narration length. Forward-only cursor: a later beat never illustrates narration
+    an earlier beat already passed, and a repeated sentence resolves to its next occurrence."""
+    norm = normalize_for_match(narration)
+    cursor = 0
+    offsets: list[int | None] = []
+    for span in spans:
+        needle = normalize_for_match(span)
+        at = norm.find(needle, cursor) if needle else -1
+        if at < 0:
+            offsets.append(None)
+        else:
+            cursor = at + len(needle)
+            offsets.append(at)
+    return offsets, len(norm)
 
 
 class ShortBeat(BaseModel):
@@ -91,4 +131,25 @@ class ShortScript(BaseModel):
         # the new headline or the legacy overlay so the render always has a hook line.
         if not (self.overlay_headline.strip() or self.text_overlay.strip()):
             raise ValueError("short needs an overlay_headline (or legacy text_overlay)")
+        return self
+
+    @model_validator(mode="after")
+    def _spans_are_copied_not_paraphrased(self) -> "ShortScript":
+        # The renderer times each beat's image from where its narration_span sits in the
+        # narration; a PARAPHRASED span is nowhere to be found and that image drifts onto the
+        # wrong line. Catch only that: an independent membership test (not the renderer's
+        # forward cursor) so a sentence a short legitimately reuses across beats still counts as
+        # copied. Fail loud only when most present spans are absent, so the generator's retry can
+        # ask again. Two cases pass untouched: no spans at all (pre-field scripts, which fall
+        # back to the even split) and a minority of misses (the renderer interpolates those).
+        present = [b.narration_span for b in self.beats if b.narration_span.strip()]
+        if not present:
+            return self
+        norm_narration = normalize_for_match(self.narration)
+        verbatim = sum(1 for s in present if normalize_for_match(s) in norm_narration)
+        if verbatim < (len(present) + 1) // 2:
+            raise ValueError(
+                f"only {verbatim}/{len(present)} narration_spans appear verbatim in the "
+                "narration (need at least half) — spans must be copied, not paraphrased"
+            )
         return self

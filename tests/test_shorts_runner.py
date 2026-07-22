@@ -519,6 +519,86 @@ def test_beats_used_by_siblings_empty_set_when_parent_has_no_siblings(temp_db, t
     assert used == set()
 
 
+# --- reuse picker: relevance-first, zero-overlap refetch, loop beat -----
+
+def _fake_short(keyword_lists):
+    """A duck-typed short whose beats carry only what _reuse_parent_images reads."""
+    beat_cls = type("_B", (), {})
+    beats = []
+    for kws in keyword_lists:
+        b = beat_cls()
+        b.keywords, b.mood, b.narration_span = kws, "m", ""
+        beats.append(b)
+    holder = type("_S", (), {})()
+    holder.beats = beats
+    return holder
+
+
+def _md5(path):
+    import hashlib
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def test_reuse_ranks_relevance_over_novelty_and_refetches_a_zero_overlap_beat(tmp_path, monkeypatch):
+    """The best-matching parent still wins even when a sibling already used it; a beat with no
+    matching parent still is refetched rather than handed an arbitrary unrelated image."""
+    import hashlib
+
+    monkeypatch.setattr(shorts_runner, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(shorts_runner, "credit_copied_images", lambda *a, **k: None)
+    refetched = {}
+    monkeypatch.setattr(shorts_runner, "_acquire_short_stills",
+                        lambda cid, short, idx: refetched.__setitem__("idx", list(idx)))
+
+    parent_id, child_id = 6, 99
+    pimg = tmp_path / str(parent_id) / "img"
+    pimg.mkdir(parents=True)
+    (pimg / "beat_01.jpg").write_bytes(b"harbor-map")
+    (pimg / "beat_02.jpg").write_bytes(b"burning-ship")
+    (pimg / "beat_03.jpg").write_bytes(b"courtroom")
+    parent_script = {"shot_list": [
+        {"beat_id": 1, "keywords": ["harbor channel map"]},
+        {"beat_id": 2, "keywords": ["burning ship"]},
+        {"beat_id": 3, "keywords": ["courtroom trial"]},
+    ]}
+    short = _fake_short([["burning ship"], ["courtroom"], ["spaceship ufo abduction"]])
+    # A sibling already took the burning-ship still: novelty would avoid it, relevance must not.
+    batch_used = {2}
+
+    shorts_runner._reuse_parent_images(parent_id, parent_script, child_id, short, batch_used)
+
+    cimg = tmp_path / str(child_id) / "img"
+    assert _md5(cimg / "beat_01.jpg") == hashlib.md5(b"burning-ship").hexdigest()
+    assert _md5(cimg / "beat_02.jpg") == hashlib.md5(b"courtroom").hexdigest()
+    assert not (cimg / "beat_03.jpg").exists()   # zero overlap -> no copy
+    assert refetched["idx"] == [2]               # ...refetched instead
+
+
+def test_reuse_loops_the_closing_beat_back_to_the_opening_image(tmp_path, monkeypatch):
+    """The prompt loops the last beat's keywords back to the first; the picker must give it the
+    opening image (so the short loops) rather than a distinct, worse-matching still."""
+    monkeypatch.setattr(shorts_runner, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(shorts_runner, "credit_copied_images", lambda *a, **k: None)
+    monkeypatch.setattr(shorts_runner, "_acquire_short_stills", lambda *a, **k: None)
+
+    pimg = tmp_path / "6" / "img"
+    pimg.mkdir(parents=True)
+    for i, content in enumerate((b"canyon", b"dam", b"flood", b"canyon-alt"), 1):
+        (pimg / f"beat_{i:02d}.jpg").write_bytes(content)
+    parent_script = {"shot_list": [
+        {"beat_id": 1, "keywords": ["canyon geology"]},
+        {"beat_id": 2, "keywords": ["dam wall"]},
+        {"beat_id": 3, "keywords": ["flood water"]},
+        {"beat_id": 4, "keywords": ["canyon geology landslide"]},
+    ]}
+    short = _fake_short([["canyon geology"], ["dam wall"], ["flood water"], ["canyon geology"]])
+
+    shorts_runner._reuse_parent_images(6, parent_script, 99, short)
+
+    cimg = tmp_path / "99" / "img"
+    assert _md5(cimg / "beat_01.jpg") == _md5(cimg / "beat_04.jpg")  # closing image loops to opening
+
+
 # --- integration tests: _reuse_parent_images + credit_copied_images -----
 
 def test_reuse_parent_images_invokes_credit_copied_images(temp_db, tmp_path, monkeypatch):
@@ -552,10 +632,11 @@ def test_reuse_parent_images_invokes_credit_copied_images(temp_db, tmp_path, mon
     parent_img = tmp_path / str(parent_id) / "img"
     parent_img.mkdir(parents=True)
     (parent_img / "beat_01.jpg").write_bytes(beat_content)
-    # setup parent script for shot_list
+    # setup parent script for shot_list — keyword overlaps the short's beats so the picker
+    # copies the still (relevance-first) rather than treating it as a no-match and refetching.
     parent_script_path = tmp_path / str(parent_id) / "script.json"
     parent_script_path.write_text(json.dumps({
-        "shot_list": [{"beat_id": 1, "keywords": ["test"]}],
+        "shot_list": [{"beat_id": 1, "keywords": ["steamboat"]}],
     }), encoding="utf-8")
     # setup child image dir
     child_img = tmp_path / str(child_id) / "img"

@@ -263,25 +263,36 @@ def _source_short_images(
     _refetch_short_stills(child_id, short)
 
 
-def _refetch_short_stills(child_id: int, short) -> None:
-    """Fetch one still per short beat via the shared 4-tier acquirer in stills_only mode
-    (no video tier), keyed on the short's own keywords. acquire persists to the child's
-    img/beat_XX.jpg; verify every beat landed so build_short never renders a blank beat."""
+def _acquire_short_stills(child_id: int, short, indices) -> None:
+    """Fetch stills for the given child-beat indices via the shared 4-tier acquirer in
+    stills_only mode (no video tier), keyed on each beat's own keywords. Passing narration_span
+    lets the archival beat-match gate and CLIP rerank score candidates against the SENTENCE, not
+    just the bare keywords -- the same signal the main pipeline uses to keep an image on its
+    line. acquire persists to the child's img/beat_XX.jpg; verify each landed so build_short
+    never renders a blank beat."""
     from ..media import visual_fetcher  # lazy: heavy CLIP/torch deps, only on the refetch path
 
+    indices = list(indices)
     shot_list = [
-        {"beat_id": i + 1, "keywords": list(beat.keywords), "mood": beat.mood}
-        for i, beat in enumerate(short.beats)
+        {
+            "beat_id": i + 1,
+            "keywords": list(short.beats[i].keywords),
+            "mood": short.beats[i].mood,
+            "narration_span": getattr(short.beats[i], "narration_span", ""),
+        }
+        for i in indices
     ]
     visual_fetcher.acquire(child_id, shot_list, stills_only=True)
 
     child_img = OUTPUT_DIR / str(child_id) / "img"
-    missing = [
-        i + 1 for i in range(len(short.beats))
-        if not (child_img / f"beat_{i + 1:02d}.jpg").exists()
-    ]
+    missing = [i + 1 for i in indices if not (child_img / f"beat_{i + 1:02d}.jpg").exists()]
     if missing:
         raise FileNotFoundError(f"short {child_id}: no still for beats {missing} after re-fetch")
+
+
+def _refetch_short_stills(child_id: int, short) -> None:
+    """Fetch a fresh still for every beat of the short (parent had no distinct still pool)."""
+    _acquire_short_stills(child_id, short, range(len(short.beats)))
 
 
 def _prune_stale_image_assets(child_id: int) -> None:
@@ -301,6 +312,10 @@ def _prune_stale_image_assets(child_id: int) -> None:
         log.info("short %s: pruned %s replaced image asset rows", child_id, len(stale))
 
 
+def _parent_beat_tokens(pb: dict) -> set[str]:
+    return {w.lower() for kw in pb.get("keywords", []) for w in kw.split()}
+
+
 def _reuse_parent_images(
     parent_id: int, parent_script: dict, child_id: int, short,
     batch_used: set[int] | None = None,
@@ -308,10 +323,14 @@ def _reuse_parent_images(
     """Map each short beat onto the best keyword-matching parent beat image; copy it into
     the child's img/ dir under the beat_XX.jpg name build_short expects.
 
-    `batch_used` carries beat_ids already taken by SIBLING shorts in the same batch —
-    without it the popular images repeat across the 2-3 shorts and the batch looks like
-    duplicates in the feed. Preference order: unused anywhere > unused in this short >
-    keyword overlap."""
+    RELEVANCE decides first: the parent still whose keywords overlap the beat most wins. Novelty
+    is only a tie-break -- `batch_used` (beat_ids already taken by SIBLING shorts) then `used`
+    (taken earlier in THIS short) separate stills that match equally well, so the batch still
+    avoids looking like duplicates without ever trading a matching image for a fresh unrelated
+    one. A beat with NO overlapping parent still gets a fresh fetch instead of an arbitrary copy
+    (an unrelated still on the line is exactly the "image off the narration" fault), and the
+    closing beat, whose keywords the prompt loops back to the opening beat's, deliberately reuses
+    the opening image so the short loops."""
     parent_img = OUTPUT_DIR / str(parent_id) / "img"
     child_img = OUTPUT_DIR / str(child_id) / "img"
     child_img.mkdir(parents=True, exist_ok=True)
@@ -319,23 +338,53 @@ def _reuse_parent_images(
     parent_beats = parent_script.get("shot_list", [])
     batch_used = batch_used if batch_used is not None else set()
     used: set[int] = set()
-    for i, beat in enumerate(short.beats):
-        want = {w.lower() for kw in beat.keywords for w in kw.split()}
+    wants = [{w.lower() for kw in b.keywords for w in kw.split()} for b in short.beats]
+    picks: dict[int, int] = {}      # child beat index -> parent beat_id copied
+    unmatched: list[int] = []       # child beat indices with no matching parent still
+
+    def _copy(parent_beat_id: int, child_idx: int) -> None:
+        shutil.copyfile(
+            parent_img / f"beat_{parent_beat_id:02d}.jpg",
+            child_img / f"beat_{child_idx + 1:02d}.jpg",
+        )
+
+    last = len(short.beats) - 1
+    for i in range(len(short.beats)):
+        want = wants[i]
+        # Loop the closing image back to the opening frame when the prompt echoed the first
+        # beat's keywords into the last -- but only if the opening beat actually took a still
+        # (a zero-overlap opening was refetched, so there is nothing to loop back to).
+        if i == last and want and want == wants[0] and 0 in picks:
+            picks[i] = picks[0]
+            _copy(picks[0], i)
+            continue
         scored = sorted(
             (
-                (len(want & {w.lower() for kw in pb.get("keywords", []) for w in kw.split()}), pb["beat_id"])
+                (len(want & _parent_beat_tokens(pb)), pb["beat_id"])
                 for pb in parent_beats
                 if (parent_img / f"beat_{pb['beat_id']:02d}.jpg").exists()
             ),
-            key=lambda t: (t[1] in used, t[1] in batch_used, -t[0]),
+            key=lambda t: (-t[0], t[1] in used, t[1] in batch_used),
         )
-        if not scored:
-            raise FileNotFoundError(f"parent {parent_id} has no beat images to reuse")
-        beat_id = scored[0][1]
+        best = scored[0] if scored else None
+        if best is None or best[0] == 0:
+            unmatched.append(i)
+            continue
+        beat_id = best[1]
+        picks[i] = beat_id
         used.add(beat_id)
         batch_used.add(beat_id)
-        shutil.copyfile(parent_img / f"beat_{beat_id:02d}.jpg", child_img / f"beat_{i + 1:02d}.jpg")
+        _copy(beat_id, i)
+
+    if unmatched:
+        log.warning(
+            "short %s: %s of %s beats have no matching parent still -> fetching fresh",
+            child_id, len(unmatched), len(short.beats),
+        )
+        _acquire_short_stills(child_id, short, unmatched)
 
     # After the copies land, not per beat: one session covers the whole short. Without a row
-    # of its own the child publishes the parent's licensed stills with no credit.
+    # of its own the child publishes the parent's licensed stills with no credit. Keyed on file
+    # content, so only the copied stills are credited to the parent -- fetched beats carry their
+    # own licence rows from the acquirer.
     credit_copied_images(parent_id, child_id=child_id, output_dir=OUTPUT_DIR)
