@@ -16,13 +16,10 @@ from ai_operator.content.llm_client import LLMError, complete
 def cfg(monkeypatch):
     """Set the three provider knobs at once; each test states the config it cares about."""
 
-    def _set(*, anthropic=None, gateway=None, gemini=None, claude_cli=False):
+    def _set(*, anthropic=None, gateway=None, gemini=None):
         monkeypatch.setattr(llm_client.settings, "ANTHROPIC_API_KEY", anthropic, raising=False)
         monkeypatch.setattr(llm_client.settings, "LLM_GATEWAY_URL", gateway, raising=False)
         monkeypatch.setattr(llm_client.settings, "GEMINI_API_KEY", gemini, raising=False)
-        # The CLI provider depends on a binary being installed, so the chain would otherwise
-        # differ between a developer's laptop and CI. Off unless a test asks for it.
-        monkeypatch.setattr(llm_client.settings, "CLAUDE_CLI_ENABLED", claude_cli, raising=False)
 
     return _set
 
@@ -166,74 +163,3 @@ def test_a_cheap_step_falling_back_stays_quiet(cfg, monkeypatch):
     complete("sys", "user", step="srt_translate", thinking=False)
 
     assert alerts == []
-
-
-def test_the_cli_stands_in_for_the_api_on_thinking_steps(cfg, monkeypatch):
-    """Both API paths can be gone at once -- an exhausted key and an absent gateway -- and the
-    pipeline then hands documentary scripts to the last-resort model. The subscription is right
-    there, so it sits directly behind the API and ahead of everything cheaper."""
-    cfg(anthropic="sk-a", gateway="http://localhost/v1", gemini="g", claude_cli=True)
-    monkeypatch.setattr(llm_client.shutil, "which", lambda name: "/usr/local/bin/claude")
-
-    assert llm_client._provider_chain(thinking=True) == ["anthropic", "claude_cli", "gateway", "gemini"]
-
-
-def test_cheap_steps_do_not_wait_three_minutes_for_the_cli(cfg, monkeypatch):
-    """A script is worth 171s; a healthcheck running every few minutes is not."""
-    cfg(anthropic="sk-a", gateway="http://localhost/v1", gemini="g", claude_cli=True)
-    monkeypatch.setattr(llm_client.shutil, "which", lambda name: "/usr/local/bin/claude")
-
-    assert "claude_cli" not in llm_client._provider_chain(thinking=False)
-
-
-def test_the_cli_is_skipped_when_absent_or_switched_off(cfg, monkeypatch):
-    cfg(anthropic="sk-a", gemini="g", claude_cli=True)
-    monkeypatch.setattr(llm_client.shutil, "which", lambda name: None)
-    assert "claude_cli" not in llm_client._provider_chain(thinking=True)
-
-    monkeypatch.setattr(llm_client.shutil, "which", lambda name: "/usr/local/bin/claude")
-    monkeypatch.setattr(llm_client.settings, "CLAUDE_CLI_ENABLED", False, raising=False)
-    assert "claude_cli" not in llm_client._provider_chain(thinking=True)
-
-
-def test_the_dead_api_key_is_kept_out_of_the_cli_environment(monkeypatch):
-    """The CLI prefers a key over the logged-in session, so leaving an exhausted key in the
-    child's environment makes it fail instead of using the subscription that would have worked.
-    That single variable is the difference between this provider working and not."""
-    captured: dict = {}
-
-    class _Proc:
-        returncode, stdout, stderr = 0, "answer", ""
-
-    def _run(cmd, **kwargs):
-        captured["cmd"] = cmd
-        captured["env"] = kwargs["env"]
-        captured["stdin"] = kwargs["stdin"]
-        return _Proc()
-
-    monkeypatch.setattr(llm_client.shutil, "which", lambda name: "/usr/local/bin/claude")
-    monkeypatch.setattr(llm_client.os, "environ", {"ANTHROPIC_API_KEY": "dead", "PATH": "/usr/bin"})
-    monkeypatch.setattr(llm_client.subprocess, "run", _run)
-    monkeypatch.setattr(llm_client, "check_and_reserve", lambda *a, **k: 1)
-    monkeypatch.setattr(llm_client, "record_actual", lambda *a, **k: None)
-
-    out = llm_client._complete_claude_cli("sys", "user", max_tokens=100, step="s", video_id=1)
-
-    assert out == "answer"
-    assert "ANTHROPIC_API_KEY" not in captured["env"]
-    assert captured["env"]["PATH"] == "/usr/bin"          # the rest of the environment survives
-    assert "--system-prompt" in captured["cmd"]           # replaces, never appends
-    assert captured["stdin"] is llm_client.subprocess.DEVNULL  # else 3s of waiting per call
-
-
-def test_a_failing_cli_falls_through_rather_than_crashing(monkeypatch):
-    class _Proc:
-        returncode, stdout, stderr = 1, "", "not logged in"
-
-    monkeypatch.setattr(llm_client.shutil, "which", lambda name: "/usr/local/bin/claude")
-    monkeypatch.setattr(llm_client.subprocess, "run", lambda cmd, **kw: _Proc())
-    monkeypatch.setattr(llm_client, "check_and_reserve", lambda *a, **k: 1)
-    monkeypatch.setattr(llm_client, "record_actual", lambda *a, **k: None)
-
-    with pytest.raises(LLMError, match="not logged in"):
-        llm_client._complete_claude_cli("sys", "user", max_tokens=100, step="s", video_id=1)

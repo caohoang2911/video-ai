@@ -86,16 +86,6 @@ class Settings(BaseSettings):
     # prose quality. It only runs when both preferred providers are down -- which is exactly
     # when nobody is watching, so it should not be a name buried in a call site.
     GEMINI_TEXT_MODEL: str = "gemini-2.5-flash"
-    # Headless Claude Code CLI as a stand-in for the Anthropic API on reasoning-dependent
-    # steps, running on the operator's own subscription. It exists because both API paths can
-    # be down at once — an exhausted key and an absent gateway — and the pipeline then hands
-    # documentary scripts to the last-resort model without anyone noticing. Measured at
-    # 101-171s per call against ~20-30s for the API, so it is worth the wait for a script and
-    # not for a healthcheck; only `thinking` steps use it. Set False to keep the pipeline off
-    # the subscription entirely.
-    CLAUDE_CLI_ENABLED: bool = True
-    CLAUDE_CLI_MODEL: str = "opus"
-    CLAUDE_CLI_TIMEOUT_SEC: int = 600
     # Minimum agreement (0..1) between an archival photo and the line the narrator speaks over
     # it. CLIP re-ranking only ORDERS Commons candidates; without a floor the top of an
     # entirely off-beat pool still won, and Commons' museum catalogue photography meant beats

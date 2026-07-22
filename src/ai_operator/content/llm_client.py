@@ -9,10 +9,7 @@ deps are not installed until API keys are actually provisioned.
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
-import subprocess
 import time
 
 from ..config import settings
@@ -155,20 +152,10 @@ def _alert_degraded(step: str, served_by: str, failures: list[str]) -> None:
 
 
 def _provider_chain(thinking: bool) -> list[str]:
-    """Providers to try in order for this step, best-quality first, given what is configured.
-
-    The Claude Code CLI joins the chain for THINKING steps only. It writes as well as the API
-    -- measured on the real prompts, a 16k-character system prompt returned a 1268-word script
-    with a complete 13-beat shot list, valid JSON, nothing truncated -- but each call pays a
-    process start and ran 101-171s against ~20-30s for the API. That is a fine trade to keep a
-    documentary script off the last-resort model and a bad one for a healthcheck, which is why
-    cheap steps still fall straight through to Gemini instead of waiting three minutes.
-    """
+    """Providers to try in order for this step, best-quality first, given what is configured."""
     chain: list[str] = []
     if thinking and settings.ANTHROPIC_API_KEY:
         chain.append("anthropic")
-    if thinking and _claude_cli_available():
-        chain.append("claude_cli")
     if settings.LLM_GATEWAY_URL:
         chain.append("gateway")
     elif settings.ANTHROPIC_API_KEY and "anthropic" not in chain:
@@ -176,52 +163,6 @@ def _provider_chain(thinking: bool) -> list[str]:
     if settings.GEMINI_API_KEY:
         chain.append("gemini")
     return chain
-
-
-def _claude_cli_available() -> bool:
-    return bool(settings.CLAUDE_CLI_ENABLED) and shutil.which("claude") is not None
-
-
-def _complete_claude_cli(system: str, user: str, *, max_tokens: int, step: str,
-                         video_id: int | None) -> str:
-    """Run the step through the Claude Code CLI in headless mode, on the operator's subscription.
-
-    This exists because the two API paths can both be gone at once -- an exhausted key and an
-    absent gateway -- and the pipeline then quietly hands documentary scripts to the last-resort
-    model for a whole day. The CLI is already installed and already logged in.
-
-    Two details are load-bearing. `ANTHROPIC_API_KEY` must be stripped from the child's
-    environment: the CLI prefers a key over the logged-in session, so an exhausted key makes it
-    fail rather than fall back to the subscription that would have worked. And `--system-prompt`
-    REPLACES the CLI's own prompt rather than appending to it, which is what keeps a
-    coding-agent framing out of documentary prose -- the very thing that pushes the gateway
-    below this provider.
-
-    `max_tokens` has no equivalent here. The API path floors it at 16k because a long thinking
-    pass can otherwise eat the whole budget and return no text; the CLI decides for itself, so
-    the guard against that is the measurement above, not a parameter.
-    """
-    if shutil.which("claude") is None:
-        raise LLMError("claude CLI not on PATH")
-    ledger_id = check_and_reserve(0.0, step=step, provider="claude_cli", video_id=video_id)
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-    try:
-        proc = subprocess.run(
-            ["claude", "-p", "--system-prompt", system, "--model", settings.CLAUDE_CLI_MODEL, user],
-            capture_output=True, text=True, env=env,
-            stdin=subprocess.DEVNULL,  # else the CLI waits 3s per call for stdin that never comes
-            timeout=settings.CLAUDE_CLI_TIMEOUT_SEC,
-        )
-    except Exception:
-        record_actual(ledger_id, 0.0)
-        raise
-    record_actual(ledger_id, 0.0)  # served by the subscription: no per-call charge to attribute
-    if proc.returncode != 0:
-        raise LLMError(f"claude CLI exited {proc.returncode}: {proc.stderr.strip()[:200]}")
-    text = proc.stdout.strip()
-    if not text:
-        raise LLMError("claude CLI returned no text")
-    return text
 
 
 def _complete_gateway(system: str, user: str, *, max_tokens: int, step: str, video_id: int | None) -> str:
@@ -355,7 +296,6 @@ def _complete_gemini(system: str, user: str, *, max_tokens: int, step: str, vide
 # Built after the call functions exist so `complete` can dispatch by provider name.
 _PROVIDERS = {
     "anthropic": _complete_anthropic,
-    "claude_cli": _complete_claude_cli,
     "gateway": _complete_gateway,
     "gemini": _complete_gemini,
 }
